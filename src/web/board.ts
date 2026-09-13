@@ -20,6 +20,8 @@ const REDUCED_MOTION = typeof matchMedia === 'function' && matchMedia('(prefers-
 const ROSE_GLYPHS = ['○', '△', '□', '☆', '◇', '♡'];
 const LONG_PRESS_MS = 450;
 const MOVE_SLOP = 8;
+/** Border band width, as a fraction of the cell size on each side of an edge (was 0.2; halved). */
+const BAND_MARGIN = 0.1;
 
 export interface BoardCallbacks {
   /** called after any change to the player's marks */
@@ -163,7 +165,7 @@ export class Board {
     const fy = y - cy;
     const dx = Math.abs(fx - 0.5);
     const dy = Math.abs(fy - 0.5);
-    if (Math.max(dx, dy) < 0.3) return { cell: c, zone: 'inner', edge: -1 };
+    if (Math.max(dx, dy) < 0.5 - BAND_MARGIN) return { cell: c, zone: 'inner', edge: -1 };
     let other: number;
     if (dx > dy) other = fx < 0.5 ? (cx > 0 ? c - 1 : -1) : cx < g.w - 1 ? c + 1 : -1;
     else other = fy < 0.5 ? (cy > 0 ? c - g.w : -1) : cy < g.h - 1 ? c + g.w : -1;
@@ -252,14 +254,12 @@ export class Board {
     const hit = this.downHit;
     if (!ps || !hit) return;
     const tap = !this.moved && this.gesture === 'none';
-    if (tap && ps.paint[hit.cell]) {
-      // a plain tap on a painted cell erases it (in eraser mode too), even one
-      // that lands in the border band: an imprecise tap meant to erase should
-      // never read as a wall toggle instead
-      this.change(() => ps.erasePaint(hit.cell));
-    } else if (tap && hit.zone === 'band') {
+    if (tap && hit.zone === 'band') {
       // walls toggle on release only, so a drag that began near a border paints instead
       if (!ps.fixed[hit.edge]) this.change(() => ps.toggleWall(hit.edge));
+    } else if (tap && ps.paint[hit.cell]) {
+      // a plain tap on a painted cell erases it (in eraser mode too)
+      this.change(() => ps.erasePaint(hit.cell));
     } else if (tap && !this.eraser) {
       this.change(() => ps.newRegion(hit.cell));
     }
