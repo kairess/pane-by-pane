@@ -38,7 +38,10 @@ type Hit = { cell: number; zone: 'inner' | 'band'; edge: number };
  * border never leaves a stray wall behind:
  *   tap empty cell          start a new paint region (auto colour)
  *   tap painted cell        erase that cell (press-and-drag from it extends instead)
- *   drag (from anywhere)    paint: extend the region of the start cell (never across a wall)
+ *   drag (from anywhere)    paint: extend the region of the start cell (never across a wall);
+ *                           if the drag's first new cell is already part of that same
+ *                           region, the whole stroke erases instead (a quick way to clear
+ *                           a region without switching to eraser mode)
  *   tap on a border         toggle a wall, applied on release (no dragging along borders)
  *   long-press on a cell    show the size of the wall-bounded area
  *   eraser mode             tap/drag removes paint (walls are removed by tapping them)
@@ -88,6 +91,8 @@ export class Board {
   private moved = false;
   private changed = false;
   private gesture: 'none' | 'paint' | 'consumed' = 'none';
+  /** decided lazily, the first time a paint drag reaches a cell other than the start cell */
+  private dragMode: 'extend' | 'erase' | null = null;
   private brush = 0;
   private longTimer: number | null = null;
   private areaCells: number[] | null = null;
@@ -195,6 +200,7 @@ export class Board {
     this.moved = false;
     this.changed = false;
     this.gesture = 'none';
+    this.dragMode = null;
     this.hint = null;
     const ps = this.ps;
     // Nothing is changed yet: a wall waits for release, paint waits for a tap or a move.
@@ -234,7 +240,20 @@ export class Board {
     if (!hit) return;
     if (this.eraser) {
       if (ps.paint[hit.cell]) this.change(() => ps.erasePaint(hit.cell));
-    } else if (this.brush && ps.canExtend(hit.cell, this.brush)) {
+      return;
+    }
+    if (!this.brush) return;
+    if (this.dragMode === null && hit.cell !== start.cell) {
+      // The first cell the drag actually reaches (not just any sample still inside
+      // the start cell) decides the rest of the stroke: onto the same region reads
+      // as "erase this", onto anything else keeps extending/filling as before.
+      this.dragMode = ps.paint[hit.cell] === this.brush ? 'erase' : 'extend';
+      // The stroke started on the region too, so it erases like the rest of it.
+      if (this.dragMode === 'erase' && ps.paint[start.cell]) this.change(() => ps.erasePaint(start.cell));
+    }
+    if (this.dragMode === 'erase') {
+      if (ps.paint[hit.cell]) this.change(() => ps.erasePaint(hit.cell));
+    } else if (ps.canExtend(hit.cell, this.brush)) {
       // A blocked stroke (across a wall) changes nothing and leaves no undo step.
       this.change(() => ps.extend(hit.cell, this.brush));
     }
