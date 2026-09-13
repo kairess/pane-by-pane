@@ -595,7 +595,7 @@ export class Board {
       }
       const [x1, y1, x2, y2] = seg;
       ctx.strokeStyle = bad ? '#7f1d1d' : wrong ? '#dc2626' : lit > 0 ? mix(PLAYER_WALL, LEAD, lit) : PLAYER_WALL;
-      ctx.lineWidth = fixed ? 5 : wrong ? 7 : 3.5 + (leadW - 3.5) * lit;
+      ctx.lineWidth = fixed ? 5 : wrong ? 7 : 3 + (leadW - 3) * lit;
       ctx.lineCap = fixed || lit > 0.5 ? 'square' : 'round';
       ctx.beginPath();
       ctx.moveTo(x1, y1);
