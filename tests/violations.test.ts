@@ -53,7 +53,7 @@ test('area number and paint violations', () => {
   assert.equal(findViolations(puzzle, ps3).cells.size, 0);
 });
 
-test('fixed walls: painting across one flags the wall, drawing on it is ignored', () => {
+test('fixed walls: the brush stops at one, drawing on it is ignored, paint across one is flagged', () => {
   const puzzle: Puzzle = { width: 3, height: 1, walls: [{ a: 0, b: 1 }], clues: [] };
   const ps = new PlayerState(puzzle);
   const e = edgeBetween(ps.grid, 0, 1);
@@ -62,7 +62,11 @@ test('fixed walls: painting across one flags the wall, drawing on it is ignored'
   assert.equal(ps.edge[e], 0, 'fixed walls are not player marks');
   assert.equal(ps.areaOf(0).count, 1, 'fixed wall bounds the area');
   const id = ps.newRegion(0);
-  ps.extend(1, id);
+  assert.ok(!ps.extend(1, id), 'the brush cannot cross a fixed wall');
+  assert.equal(ps.paint[1], 0);
+  assert.equal(findViolations(puzzle, ps).edges.size, 0);
+  // paint that nevertheless straddles a fixed wall (e.g. an old save) flags the wall
+  ps.paint[1] = id;
   const v = findViolations(puzzle, ps);
   assert.deepEqual([...v.edges], [e]);
   assert.equal(v.cells.size, 0);

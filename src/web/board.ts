@@ -212,7 +212,8 @@ export class Board {
     if (!hit) return;
     if (this.eraser) {
       if (ps.paint[hit.cell]) this.change(() => ps.erasePaint(hit.cell));
-    } else if (this.brush && ps.paint[hit.cell] !== this.brush) {
+    } else if (this.brush && ps.canExtend(hit.cell, this.brush)) {
+      // A blocked stroke (across a wall) changes nothing and leaves no undo step.
       this.change(() => ps.extend(hit.cell, this.brush));
     }
   }

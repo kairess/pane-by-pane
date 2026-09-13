@@ -37,3 +37,15 @@ test('undo restores the previous snapshot', () => {
   assert.ok(ps.redo());
   assert.notEqual(ps.paint[0], 0);
 });
+
+test('a fixed wall blocks the brush like a drawn one', () => {
+  const ps = new PlayerState({ ...puzzle, walls: [{ a: 1, b: 2 }] });
+  const a = ps.newRegion(0);
+  assert.ok(ps.extend(1, a));
+  assert.ok(!ps.extend(2, a), 'cannot paint across a fixed wall');
+  assert.equal(ps.paint[2], 0);
+  const b = ps.newRegion(3);
+  assert.ok(ps.extend(2, b), 'the other side is reachable from its own region');
+  assert.ok(!ps.extend(1, b), 'nor can the brush cross back and absorb a region');
+  assert.equal(ps.paint[1], a);
+});

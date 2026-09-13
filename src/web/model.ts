@@ -156,23 +156,23 @@ export class PlayerState {
     return id;
   }
 
+  /** True if region `id` touches `cell` across an edge that is neither drawn nor fixed. */
+  canExtend(cell: number, id: number): boolean {
+    if (!this.grid.active[cell] || this.paint[cell] === id) return false;
+    const g = this.grid;
+    for (let i = 0; i < g.adj[cell].length; i++) {
+      if (!this.isWall(g.adjEdge[cell][i]) && this.paint[g.adj[cell][i]] === id) return true;
+    }
+    return false;
+  }
+
   /**
    * Paint `cell` with region `id` if it touches that region across a non-wall
    * edge. If the cell already belongs to another region, that whole region is
    * absorbed into `id` (dragging the brush over a region recolours it).
    */
   extend(cell: number, id: number): boolean {
-    if (!this.grid.active[cell] || this.paint[cell] === id) return false;
-    const g = this.grid;
-    let touches = false;
-    for (let i = 0; i < g.adj[cell].length; i++) {
-      const e = g.adjEdge[cell][i];
-      if (this.edge[e] !== WALL && this.paint[g.adj[cell][i]] === id) {
-        touches = true;
-        break;
-      }
-    }
-    if (!touches) return false;
+    if (!this.canExtend(cell, id)) return false;
     const old = this.paint[cell];
     if (old) {
       for (const c of this.regionCells(old)) this.setPaint(c, id);
@@ -267,7 +267,7 @@ export class PlayerState {
         comp.push(c);
         for (let i = 0; i < g.adj[c].length; i++) {
           const n = g.adj[c][i];
-          if (this.paint[n] === id && !seen.has(n) && this.edge[g.adjEdge[c][i]] !== WALL) {
+          if (this.paint[n] === id && !seen.has(n) && !this.isWall(g.adjEdge[c][i])) {
             seen.add(n);
             stack.push(n);
           }
