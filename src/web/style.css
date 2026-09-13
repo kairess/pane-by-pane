@@ -215,9 +215,22 @@ button.primary {
   opacity: 1;
 }
 
-canvas#board {
+/* the window and, on iOS, the invisible switch that plays the haptics */
+#stage {
   position: relative;
+  flex: none;
   margin: auto;
+  max-width: 100%;
+  line-height: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+canvas#board {
+  display: block;
+  position: relative;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -230,6 +243,31 @@ canvas#board {
 
 canvas#board.lit {
   filter: drop-shadow(0 0 14px rgba(255, 225, 170, 0.55)) drop-shadow(0 0 60px rgba(255, 205, 140, 0.35)) drop-shadow(0 0 140px rgba(255, 190, 110, 0.25));
+}
+
+/* iOS: a real switch under the finger is the only thing that makes the phone tick (see haptics.ts) */
+#haptic {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  -webkit-appearance: switch;
+  appearance: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: inherit;
+}
+
+#haptic.debug {
+  opacity: 0.6;
 }
 
 /* -- goal strip: the rules of this window, always in view ------------------- */

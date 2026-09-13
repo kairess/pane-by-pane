@@ -2,6 +2,7 @@ import { edgeBetween, type Grid } from '../engine/grid.ts';
 import { parseKey, type ShapeKey } from '../engine/shape.ts';
 import type { Puzzle } from '../engine/types.ts';
 import type { Hint, Mistake } from './analysis.ts';
+import { Haptics } from './haptics.ts';
 import { HUES, NONE, PlayerState, WALL, huePool } from './model.ts';
 
 /** colour of borders drawn by the player: a sketch line, unlike the dark lead of the window */
@@ -42,6 +43,11 @@ type Hit = { cell: number; zone: 'inner' | 'band'; edge: number };
  */
 export class Board {
   readonly canvas: HTMLCanvasElement;
+  /** wraps the canvas; receives the gestures (on iOS a switch on top of the canvas gets the touches) */
+  private stage: HTMLElement;
+  /** the stone wall around the window (#board-wrap) */
+  private wrap: HTMLElement;
+  private haptics: Haptics;
   private ctx: CanvasRenderingContext2D;
   puzzle: Puzzle | null = null;
   grid: Grid | null = null;
@@ -86,16 +92,22 @@ export class Board {
 
   constructor(canvas: HTMLCanvasElement, cb: BoardCallbacks) {
     this.canvas = canvas;
+    this.stage = canvas.parentElement!;
+    this.wrap = this.stage.parentElement!;
     this.ctx = canvas.getContext('2d')!;
     this.cb = cb;
-    canvas.addEventListener('pointerdown', (e) => this.onDown(e));
-    canvas.addEventListener('pointermove', (e) => this.onMove(e));
-    canvas.addEventListener('pointerup', (e) => this.onUp(e));
-    canvas.addEventListener('pointercancel', (e) => this.onUp(e));
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.haptics = new Haptics(this.stage, canvas);
+    const stage = this.stage;
+    stage.addEventListener('pointerdown', (e) => this.onDown(e));
+    stage.addEventListener('pointermove', (e) => this.onMove(e));
+    stage.addEventListener('pointerup', (e) => this.onUp(e));
+    stage.addEventListener('pointercancel', (e) => this.onUp(e));
+    stage.addEventListener('contextmenu', (e) => e.preventDefault());
     // Block the browser's own touch gestures on the board (pinch zoom, double-tap
-    // zoom, long-press magnifier/selection); pointer events still fire.
-    for (const t of ['touchstart', 'touchmove', 'touchend'] as const) canvas.addEventListener(t, (e) => e.preventDefault(), { passive: false });
+    // zoom, long-press magnifier/selection); pointer events still fire. With the
+    // haptic switch in place the touches must keep their default handling (that
+    // is what ticks), and CSS touch-action / user-select do the blocking.
+    if (!this.haptics.overlay) for (const t of ['touchstart', 'touchmove', 'touchend'] as const) stage.addEventListener(t, (e) => e.preventDefault(), { passive: false });
     window.addEventListener('resize', () => this.layout());
   }
 
@@ -117,7 +129,7 @@ export class Board {
 
   layout(): void {
     if (!this.grid) return;
-    const wrap = this.canvas.parentElement!;
+    const wrap = this.wrap;
     // fit the content box of the stage (its padding excluded); the goal strip
     // above the window takes its share of the height
     const cs = getComputedStyle(wrap);
@@ -174,7 +186,8 @@ export class Board {
     if (!hit) return;
     e.preventDefault();
     this.pointerId = e.pointerId;
-    this.canvas.setPointerCapture(e.pointerId);
+    this.stage.setPointerCapture(e.pointerId);
+    this.haptics.begin();
     this.downPos = p;
     this.downHit = hit;
     this.moved = false;
@@ -229,7 +242,7 @@ export class Board {
     if (e.pointerId !== this.pointerId) return;
     this.pointerId = -1;
     this.cancelLongPress();
-    if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
+    if (this.stage.hasPointerCapture(e.pointerId)) this.stage.releasePointerCapture(e.pointerId);
     if (this.areaCells) {
       this.areaCells = null;
       this.cb.onArea(null);
@@ -248,6 +261,7 @@ export class Board {
     } else if (tap && !this.eraser) {
       this.change(() => ps.newRegion(hit.cell));
     }
+    this.haptics.end(this.changed);
     if (this.changed) this.cb.onChange();
     this.draw();
   }
@@ -260,6 +274,7 @@ export class Board {
       this.changed = true;
     }
     fn();
+    this.haptics.tick();
     this.draw();
   }
 
@@ -305,7 +320,7 @@ export class Board {
     if (done === this.complete) return;
     this.complete = done;
     this.canvas.classList.toggle('lit', done);
-    this.canvas.parentElement?.classList.toggle('lit', done);
+    this.wrap.classList.toggle('lit', done);
     this.litFrom = this.lit;
     this.litT0 = performance.now();
     this.litDur = done ? 1100 : 350;
