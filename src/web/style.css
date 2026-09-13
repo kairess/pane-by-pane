@@ -143,6 +143,9 @@ button.icon:focus:not(:focus-visible) {
 
 dialog {
   width: min(92vw, 420px);
+  max-height: 88vh;
+  box-sizing: border-box;
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 16px 18px 18px;
@@ -636,24 +639,17 @@ select {
   display: none;
 }
 
-/* a button that reads as a link: the help entry under the toolbar */
-button.link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  align-self: flex-start;
-}
-
-button.link:hover {
-  background: none;
-  color: var(--fg);
+/* the controls, at the foot of the goal dialog */
+.dialog-section {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-family: var(--serif);
+  font-size: 16px;
 }
 
 #help-list {
-  margin: 12px 0 0;
+  margin: 8px 0 0;
   padding-left: 18px;
   font-size: 13px;
   line-height: 1.5;

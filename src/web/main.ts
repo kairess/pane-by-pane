@@ -20,7 +20,6 @@ const starsEl = $('stars');
 const rulesInfo = $('rules-info');
 const statusEl = $('status');
 const doneEl = $('done');
-const helpDialog = $<HTMLDialogElement>('help-dialog');
 const errorMode = $<HTMLSelectElement>('error-mode');
 const goalDialog = $<HTMLDialogElement>('goal-dialog');
 const goalArea = $('goal-area');
@@ -131,7 +130,7 @@ function optionsFromHash(): GenerateOptions | null {
 
 // -- generation ------------------------------------------------------------------
 
-function startGenerate(opts: GenerateOptions): void {
+function startGenerate(opts: GenerateOptions, scrollUp = false): void {
   if (worker) worker.terminate();
   worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   genBtn.disabled = true;
@@ -153,6 +152,8 @@ function startGenerate(opts: GenerateOptions): void {
     const shared = { ...opts, seed: m.seed };
     history.replaceState(null, '', optionsToHash(shared));
     loadPuzzle(m.puzzle, Int32Array.from(m.solution), m.analysis.stars, m.analysis.difficulty);
+    // asked for from the form at the bottom of a phone screen: bring the new window into view
+    if (scrollUp) window.scrollTo({ top: 0, behavior: 'smooth' });
     saveLast({ puzzle: m.puzzle, solution: m.solution, stars: m.analysis.stars, difficulty: m.analysis.difficulty, hash: location.hash });
   };
   worker.onerror = (e) => {
@@ -404,14 +405,13 @@ function generateFromForm(): void {
     warn(M.warnGeminiSizeSep);
     return;
   }
-  startGenerate(o);
+  startGenerate(o, true);
 }
 
 // The finished window offers the next one (same settings, fresh seed) and a share.
 $('done-new').addEventListener('click', () => {
   $<HTMLInputElement>('seed').value = '';
   generateFromForm();
-  $('gen-form').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 });
 $('done-share').addEventListener('click', async () => {
   const url = location.href;
@@ -428,12 +428,6 @@ $('done-share').addEventListener('click', async () => {
   const label = btn.textContent;
   btn.textContent = M.copied;
   setTimeout(() => (btn.textContent = label), 1500);
-});
-
-$('help').addEventListener('click', () => helpDialog.showModal());
-$('help-close').addEventListener('click', () => helpDialog.close());
-helpDialog.addEventListener('click', (e) => {
-  if (e.target === helpDialog) helpDialog.close();
 });
 
 $('goal-close').addEventListener('click', () => goalDialog.close());
