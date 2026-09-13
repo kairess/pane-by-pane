@@ -1,6 +1,6 @@
 # pane-by-pane
 
-> 영어 소개는 [README.md](README.md)에 있습니다. 이 문서는 설계와 구현 세부를 담은 한국어 원본입니다. 웹 UI는 브라우저 언어에 따라 한국어/영어로 표시되며 헤더의 언어 버튼으로 바꿀 수 있고, `main`에 push하면 GitHub Pages로 배포됩니다(`.github/workflows/pages.yml`).
+> 플레이: <https://kairess.github.io/pane-by-pane/> · 영어 소개는 [README.md](README.md)에 있습니다. 이 문서는 설계와 구현 세부를 담은 한국어 원본입니다. 웹 UI는 브라우저 언어에 따라 한국어/영어로 표시되며 헤더의 언어 버튼으로 바꿀 수 있고, `main`에 push하면 GitHub Pages로 배포됩니다(`.github/workflows/pages.yml`).
 
 Glimmith 스타일 "격자 분할" 퍼즐의 **엔진** — level generator + solver + uniqueness validator + difficulty estimator.
 TypeScript로 작성되어 있고 외부 런타임 의존성이 없어서 나중에 그대로 static webpage / Web Worker에 올릴 수 있습니다.

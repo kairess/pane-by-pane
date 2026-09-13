@@ -2,7 +2,7 @@
 
 A stained-glass region-partition puzzle in the spirit of *The Artisan of Glimmith*: a puzzle **engine** (generator, logical solver, uniqueness check, difficulty rating) and a small touch-first **player**, written in TypeScript with no runtime dependencies.
 
-Korean documentation: [README.ko.md](README.ko.md) · Play: the `main` branch deploys to GitHub Pages (see below).
+**Play it: <https://kairess.github.io/pane-by-pane/>** · Korean documentation: [README.ko.md](README.ko.md)
 
 ![A finished window](docs/window.png)
 
