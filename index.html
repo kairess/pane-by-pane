@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>pane by pane</title>
+    <link rel="stylesheet" href="./src/web/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="panel">
+        <h1>pane by pane</h1>
+        <form id="gen-form">
+          <label>크기
+            <span class="row">
+              <input type="number" id="w" min="3" max="10" value="6" /> ×
+              <input type="number" id="h" min="3" max="10" value="6" />
+            </span>
+          </label>
+          <fieldset id="rules">
+            <legend>룰</legend>
+            <label><input type="checkbox" value="areaNumber" checked /> Area Number</label>
+            <label><input type="checkbox" value="range" /> Range</label>
+            <label><input type="checkbox" value="shapeBank" /> Shape Bank</label>
+            <label><input type="checkbox" value="polyomino" /> Polyomino</label>
+            <label><input type="checkbox" value="gemini" checked /> Gemini</label>
+            <label><input type="checkbox" value="delta" checked /> Delta</label>
+            <label><input type="checkbox" value="rose" /> Rose</label>
+            <label><input type="checkbox" value="sizeSeparation" /> Size Separation</label>
+          </fieldset>
+          <label id="size-row">region 크기
+            <span class="row">
+              <input type="number" id="min" min="1" max="12" value="3" /> ~
+              <input type="number" id="max" min="1" max="12" value="6" />
+            </span>
+          </label>
+          <label>별점
+            <span class="row">
+              <input type="number" id="starLo" min="1" max="7" value="2" /> ~
+              <input type="number" id="starHi" min="1" max="7" value="3" />
+            </span>
+          </label>
+          <label class="check"><input type="checkbox" id="mask" checked /> 비정형 격자</label>
+          <label>seed <input type="text" id="seed" placeholder="비우면 랜덤" /></label>
+          <button type="submit" id="generate">퍼즐 생성</button>
+          <div id="gen-status" class="muted"></div>
+        </form>
+        <div id="info" hidden>
+          <div id="stars"></div>
+          <div id="rules-info"></div>
+          <div class="toolbar">
+            <button type="button" id="undo" title="⌘Z">되돌리기</button>
+            <button type="button" id="redo" title="⇧⌘Z">다시 실행</button>
+            <button type="button" id="eraser">지우개 (드래그)</button>
+            <button type="button" id="clear">전부 지우기</button>
+            <button type="button" id="hypo">가정 시작</button>
+            <span id="hypo-controls" class="pair" hidden>
+              <button type="button" id="hypo-keep">확정</button>
+              <button type="button" id="hypo-drop">버리기</button>
+            </span>
+            <button type="button" id="check">오류 확인</button>
+            <button type="button" id="hint">힌트</button>
+            <button type="button" id="reveal">정답 보기</button>
+          </div>
+          <label>오류 표시
+            <select id="error-mode">
+              <option value="always" selected>항상 (룰을 어긴 칸에 빗금)</option>
+              <option value="check">확인 버튼을 눌렀을 때</option>
+              <option value="off">끄기</option>
+            </select>
+          </label>
+          <div id="status"></div>
+          <details class="small muted">
+            <summary>조작법</summary>
+            <ul>
+              <li>빈 칸 탭: 새 region 시작 (색 자동)</li>
+              <li>칸 드래그: 지나간 칸을 같은 region으로 잇기 (벽은 못 넘음). 다른 색 영역에 닿으면 그 영역 전체가 현재 색으로 합쳐짐</li>
+              <li>칠한 칸 탭: 그 칸 지우기 · 칠한 칸에서 드래그: 그 색으로 잇기</li>
+              <li>지우개 버튼: 드래그로 여러 칸 지우기 (벽은 벽을 다시 탭해서 지움)</li>
+              <li>칸 사이 경계 탭: 벽 그리기 / 다시 탭하면 지우기 (손을 뗄 때 적용, 경계에서 드래그하면 칠하기)</li>
+              <li>칸 길게 누르기: 그 영역의 칸 수</li>
+              <li>완성: 벽을 전부 그리거나, 칸을 전부 칠하면 자동 판정</li>
+            </ul>
+          </details>
+          <a id="share" href="#" class="small">이 퍼즐 링크</a>
+        </div>
+      </aside>
+      <main id="board-wrap">
+        <canvas id="board"></canvas>
+      </main>
+    </div>
+    <script type="module" src="./src/web/main.ts"></script>
+  </body>
+</html>
