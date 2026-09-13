@@ -580,32 +580,63 @@ export class Board {
 
     // -- leading -----------------------------------------------------------------
     // Fixed walls and the frame are the lead came of the window. The player's
-    // borders are a blue sketch until the window is done, then they become lead too.
+    // borders are a graphite sketch until the window is done, then they become lead too.
     const lead: [number, number, number, number][] = [];
     const leadW = 5 + 1.5 * lit;
+    // Corners touched by lead (fixed walls, even a bad one still drawn thick, and the
+    // frame) are collected first: a player-drawn wall needs a bigger gap there to clear
+    // the lead's own thickness, or the gap just reads as "swallowed" by the black line.
+    const leadCorners = new Set<string>();
+    const corner = (x: number, y: number) => leadCorners.add(`${Math.round(x)},${Math.round(y)}`);
+    for (let e = 0; e < g.edges; e++) {
+      if (ps.fixed[e] !== 1) continue;
+      const seg = this.edgeSegment(e);
+      corner(seg[0], seg[1]);
+      corner(seg[2], seg[3]);
+      if (!this.errorEdges.has(e)) lead.push(seg);
+    }
+    // outer frame: every side of an active cell facing a hole or the outside
+    const act = (nx: number, ny: number) => nx >= 0 && ny >= 0 && nx < g.w && ny < g.h && g.active[ny * g.w + nx] === 1;
+    for (let c = 0; c < g.cells; c++) {
+      if (!g.active[c]) continue;
+      const x = c % g.w;
+      const y = (c - x) / g.w;
+      const X0 = pad + x * s;
+      const Y0 = pad + y * s;
+      const sides: [number, number, number, number][] = [];
+      if (!act(x - 1, y)) sides.push([X0, Y0, X0, Y0 + s]);
+      if (!act(x + 1, y)) sides.push([X0 + s, Y0, X0 + s, Y0 + s]);
+      if (!act(x, y - 1)) sides.push([X0, Y0, X0 + s, Y0]);
+      if (!act(x, y + 1)) sides.push([X0, Y0 + s, X0 + s, Y0 + s]);
+      for (const seg of sides) {
+        corner(seg[0], seg[1]);
+        corner(seg[2], seg[3]);
+        lead.push(seg);
+      }
+    }
+    // baseGap: a small breathing room between two player-drawn strokes that share a
+    // corner. leadGap: enough to actually clear the lead's own half-width, so the gap
+    // isn't just painted back over once the lead is stroked (see strokeLead below).
+    const baseGap = 3 * (1 - lit);
+    const leadGap = (leadW / 2 + 1.5) * (1 - lit);
     for (let e = 0; e < g.edges; e++) {
       const fixed = ps.fixed[e] === 1;
       if (!fixed && ps.edge[e] !== WALL) continue;
-      const seg = this.edgeSegment(e);
       const bad = this.errorEdges.has(e);
+      if (fixed && !bad) continue; // already in `lead`, drawn below
+      const seg = this.edgeSegment(e);
       const wrong = this.hint?.kind === 'mistake' && this.hint.edge === e;
-      if (fixed && !bad) {
-        lead.push(seg);
-        continue;
-      }
       const [x1, y1, x2, y2] = seg;
-      // A player-drawn wall stops a touch short of the corners it meets, so it
-      // reads as its own sketch stroke instead of fusing with the fixed lead
-      // there; the gap closes as the window lights up and it becomes lead too.
       let [sx1, sy1, sx2, sy2] = seg;
       if (!fixed) {
-        const inset = 3 * (1 - lit);
+        const g1 = leadCorners.has(`${Math.round(x1)},${Math.round(y1)}`) ? leadGap : baseGap;
+        const g2 = leadCorners.has(`${Math.round(x2)},${Math.round(y2)}`) ? leadGap : baseGap;
         if (x1 === x2) {
-          sy1 += inset;
-          sy2 -= inset;
+          sy1 += g1;
+          sy2 -= g2;
         } else {
-          sx1 += inset;
-          sx2 -= inset;
+          sx1 += g1;
+          sx2 -= g2;
         }
       }
       ctx.strokeStyle = bad ? '#7f1d1d' : wrong ? '#dc2626' : lit > 0 ? mix(PLAYER_WALL, LEAD, lit) : PLAYER_WALL;
@@ -622,19 +653,6 @@ export class Board {
         if (x1 === x2) ctx.fillRect(x1 - t / 2, y1, t, y2 - y1);
         else ctx.fillRect(x1, y1 - t / 2, x2 - x1, t);
       }
-    }
-    // outer frame: every side of an active cell facing a hole or the outside
-    const act = (nx: number, ny: number) => nx >= 0 && ny >= 0 && nx < g.w && ny < g.h && g.active[ny * g.w + nx] === 1;
-    for (let c = 0; c < g.cells; c++) {
-      if (!g.active[c]) continue;
-      const x = c % g.w;
-      const y = (c - x) / g.w;
-      const X0 = pad + x * s;
-      const Y0 = pad + y * s;
-      if (!act(x - 1, y)) lead.push([X0, Y0, X0, Y0 + s]);
-      if (!act(x + 1, y)) lead.push([X0 + s, Y0, X0 + s, Y0 + s]);
-      if (!act(x, y - 1)) lead.push([X0, Y0, X0 + s, Y0]);
-      if (!act(x, y + 1)) lead.push([X0, Y0 + s, X0 + s, Y0 + s]);
     }
     this.strokeLead(lead, leadW);
 
