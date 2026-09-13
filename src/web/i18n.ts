@@ -90,6 +90,7 @@ const ko = {
     '완성: 경계선을 전부 그리거나, 칸을 전부 칠하면 자동 판정',
   ],
   shareLink: '이 창 링크',
+  madeBy: '만든 사람',
   // form
   newWindow: '새 창 만들기',
   size: '크기',
@@ -248,6 +249,7 @@ const en: typeof ko = {
     'Finished: automatically checked once every border is drawn, or every cell is painted',
   ],
   shareLink: 'Link to this window',
+  madeBy: 'Made by',
   newWindow: 'New window',
   size: 'Size',
   rules: 'Rules',

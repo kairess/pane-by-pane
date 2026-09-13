@@ -427,6 +427,22 @@ canvas#board.lit {
   gap: 18px;
 }
 
+#credit {
+  margin-top: auto;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+
+#credit a {
+  color: inherit;
+  text-decoration-color: var(--line);
+}
+
+#credit a:hover {
+  color: var(--accent);
+}
+
 /* -- panel widgets --------------------------------------------------------------- */
 
 .section-title {
