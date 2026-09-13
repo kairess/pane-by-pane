@@ -594,12 +594,26 @@ export class Board {
         continue;
       }
       const [x1, y1, x2, y2] = seg;
+      // A player-drawn wall stops a touch short of the corners it meets, so it
+      // reads as its own sketch stroke instead of fusing with the fixed lead
+      // there; the gap closes as the window lights up and it becomes lead too.
+      let [sx1, sy1, sx2, sy2] = seg;
+      if (!fixed) {
+        const inset = 3 * (1 - lit);
+        if (x1 === x2) {
+          sy1 += inset;
+          sy2 -= inset;
+        } else {
+          sx1 += inset;
+          sx2 -= inset;
+        }
+      }
       ctx.strokeStyle = bad ? '#7f1d1d' : wrong ? '#dc2626' : lit > 0 ? mix(PLAYER_WALL, LEAD, lit) : PLAYER_WALL;
       ctx.lineWidth = fixed ? 5 : wrong ? 7 : 3 + (leadW - 3) * lit;
       ctx.lineCap = fixed || lit > 0.5 ? 'square' : 'round';
       ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
+      ctx.moveTo(sx1, sy1);
+      ctx.lineTo(sx2, sy2);
       ctx.stroke();
       if (bad && this.hatch) {
         // a hatched band across the wall, like the original's error mark
