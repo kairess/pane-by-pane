@@ -252,12 +252,14 @@ export class Board {
     const hit = this.downHit;
     if (!ps || !hit) return;
     const tap = !this.moved && this.gesture === 'none';
-    if (tap && hit.zone === 'band') {
+    if (tap && ps.paint[hit.cell]) {
+      // a plain tap on a painted cell erases it (in eraser mode too), even one
+      // that lands in the border band: an imprecise tap meant to erase should
+      // never read as a wall toggle instead
+      this.change(() => ps.erasePaint(hit.cell));
+    } else if (tap && hit.zone === 'band') {
       // walls toggle on release only, so a drag that began near a border paints instead
       if (!ps.fixed[hit.edge]) this.change(() => ps.toggleWall(hit.edge));
-    } else if (tap && ps.paint[hit.cell]) {
-      // a plain tap on a painted cell erases it (in eraser mode too)
-      this.change(() => ps.erasePaint(hit.cell));
     } else if (tap && !this.eraser) {
       this.change(() => ps.newRegion(hit.cell));
     }
