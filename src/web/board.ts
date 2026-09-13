@@ -618,7 +618,7 @@ export class Board {
     // corner. leadGap: enough to actually clear the lead's own half-width, so the gap
     // isn't just painted back over once the lead is stroked (see strokeLead below).
     const baseGap = 3 * (1 - lit);
-    const leadGap = (leadW / 2 + 1.5) * (1 - lit);
+    const leadGap = (leadW / 2 + 3.5) * (1 - lit);
     for (let e = 0; e < g.edges; e++) {
       const fixed = ps.fixed[e] === 1;
       if (!fixed && ps.edge[e] !== WALL) continue;
