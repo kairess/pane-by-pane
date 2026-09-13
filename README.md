@@ -14,6 +14,7 @@ A stained-glass region-partition puzzle in the spirit of *The Artisan of Glimmit
 - **Hints from the player's point of view.** Each hint first points at a region, then explains one deduction in plain language ("the region with the number 5 can only grow through this cell"). Wrong marks are pointed out before anything else.
 - **Rule checks that never peek at the solution.** Hatching marks only cells and borders that break a rule outright, so pressing "check" cannot be used as an oracle.
 - **A window that lights up.** Regions are panes of glass, borders are lead came. Finish the window and the glass deepens, the room darkens, and light plays across the panes.
+- **The goal stays in view.** A strip of chips above the window sums up every rule of the puzzle ("area 3–6", the shape bank, "= same shape"); tap one for the full description. A one-time note on first visit points it out.
 - **Playable anywhere.** Touch and mouse gestures, undo/redo, autosave, shareable links, Korean or English chosen from the browser and switchable in the header.
 
 ## Try it

@@ -67,6 +67,14 @@
     </dialog>
     <div id="app">
       <main id="board-wrap">
+        <div class="goal-area" id="goal-area" hidden>
+          <div id="goal-bar" role="group" data-i18n-aria="goal"></div>
+          <div id="coach" role="note" hidden>
+            <strong data-i18n="coachTitle">이 창의 규칙</strong>
+            <p data-i18n="coachText"></p>
+            <button type="button" id="coach-ok" data-i18n="coachOk">알겠어요</button>
+          </div>
+        </div>
         <canvas id="board"></canvas>
       </main>
       <aside id="panel">

@@ -22,6 +22,9 @@ const statusEl = $('status');
 const shareEl = $<HTMLAnchorElement>('share');
 const errorMode = $<HTMLSelectElement>('error-mode');
 const goalDialog = $<HTMLDialogElement>('goal-dialog');
+const goalArea = $('goal-area');
+const goalBar = $('goal-bar');
+const coach = $('coach');
 const revealDialog = $<HTMLDialogElement>('reveal-dialog');
 const revealBtn = $<HTMLButtonElement>('reveal');
 const warnDialog = $<HTMLDialogElement>('warn-dialog');
@@ -257,9 +260,76 @@ function loadPuzzle(p: Puzzle, solution: Int32Array, stars: number, difficulty: 
   if (kinds.has('polyomino')) add(M.rule.polyomino, M.desc.polyomino);
   if (kinds.has('gemini')) add(M.rule.gemini, M.desc.gemini);
   if (kinds.has('delta')) add(M.rule.delta, M.desc.delta);
+  buildGoalBar(p, stars);
   refreshStatus();
   updateButtons();
+  if (!coachSeen()) showCoach();
 }
+
+/** The goal strip: one short chip per rule so the goal is in view without opening the dialog. */
+function buildGoalBar(p: Puzzle, stars: number): void {
+  goalBar.replaceChildren();
+  const chip = (text: string, extra?: HTMLElement[], cls = ''): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `chip ${cls}`.trim();
+    b.title = M.chip.open;
+    b.append(text, ...(extra ?? []));
+    b.addEventListener('click', openGoal);
+    goalBar.append(b);
+    return b;
+  };
+  chip('★'.repeat(stars) + '☆'.repeat(7 - stars), [], 'stars');
+  // one chip per rule kind, in a fixed order (area first, then shapes, then relations)
+  const specs = new Map<string, () => void>();
+  for (const c of p.clues) {
+    if (c.type === 'areaNumber') specs.set('areaNumber', () => chip(M.chip.areaNumber));
+    else if (c.type === 'range') {
+      const { min, max } = c;
+      specs.set('range', () => chip(min !== undefined && min === max ? M.chip.precision(min) : M.chip.range(min, max)));
+    } else if (c.type === 'shapeBank') specs.set('shapeBank', () => chip(M.chip.shapeBank, c.shapes.map((k) => shapeIcon(k, 5, '#f3eee6'))));
+    else if (c.type === 'rose') specs.set('rose', () => chip(M.chip.rose(['○', '△', '□', '☆'].slice(0, c.symbolCount).join(''))));
+    else if (c.type === 'polyomino') specs.set('polyomino', () => chip(M.chip.polyomino));
+    else if (c.type === 'gemini') specs.set('gemini', () => chip(M.chip.gemini));
+    else if (c.type === 'delta') specs.set('delta', () => chip(M.chip.delta));
+    else if (c.type === 'sizeSeparation') specs.set('sizeSeparation', () => chip(M.chip.sizeSeparation));
+  }
+  for (const k of ['areaNumber', 'range', 'shapeBank', 'rose', 'polyomino', 'gemini', 'delta', 'sizeSeparation']) specs.get(k)?.();
+  chip('?', [], 'info').setAttribute('aria-label', M.chip.open);
+  goalArea.hidden = false;
+  board.layout();
+}
+
+function openGoal(): void {
+  if (!current) return;
+  dismissCoach();
+  goalDialog.showModal();
+}
+
+// -- first-visit note ------------------------------------------------------------
+
+function coachSeen(): boolean {
+  try {
+    return localStorage.getItem('pbp:coach') === '1';
+  } catch {
+    return true;
+  }
+}
+
+function showCoach(): void {
+  coach.hidden = false;
+}
+
+function dismissCoach(): void {
+  if (coach.hidden) return;
+  coach.hidden = true;
+  try {
+    localStorage.setItem('pbp:coach', '1');
+  } catch {
+    /* ignore */
+  }
+}
+$('coach-ok').addEventListener('click', dismissCoach);
 
 function setStatus(text: string, cls = ''): void {
   statusEl.textContent = text;
@@ -278,6 +348,7 @@ function refreshStatus(): void {
 
 function onChange(): void {
   if (!current) return;
+  dismissCoach();
   if (board.reveal) hideSolution();
   resetHint();
   const v = errorMode.value === 'always' ? findViolations(current.puzzle, current.ps) : { cells: new Set<number>(), edges: new Set<number>() };
@@ -330,9 +401,7 @@ form.addEventListener('submit', (e) => {
   startGenerate(o);
 });
 
-$('goal').addEventListener('click', () => {
-  if (current) goalDialog.showModal();
-});
+$('goal').addEventListener('click', openGoal);
 $('goal-close').addEventListener('click', () => goalDialog.close());
 goalDialog.addEventListener('click', (e) => {
   if (e.target === goalDialog) goalDialog.close();

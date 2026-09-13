@@ -118,7 +118,14 @@ export class Board {
   layout(): void {
     if (!this.grid) return;
     const wrap = this.canvas.parentElement!;
-    const avail = Math.min(wrap.clientWidth, wrap.clientHeight || 9999) - 2 * this.pad - 8;
+    // fit the content box of the stage (its padding excluded); the goal strip
+    // above the window takes its share of the height
+    const cs = getComputedStyle(wrap);
+    const strip = wrap.querySelector<HTMLElement>('.goal-area');
+    const stripH = strip && !strip.hidden ? strip.offsetHeight + 8 : 0;
+    const innerW = wrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const innerH = (wrap.clientHeight || 9999) - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - stripH;
+    const avail = Math.min(innerW, innerH) - 2 * this.pad - 8;
     this.cell = Math.max(30, Math.min(72, Math.floor(avail / Math.max(this.grid.w, this.grid.h))));
     const cssW = this.grid.w * this.cell + 2 * this.pad;
     const cssH = this.grid.h * this.cell + 2 * this.pad;
@@ -829,7 +836,7 @@ export function solutionView(puzzle: Puzzle, labels: ArrayLike<number>): PlayerS
 }
 
 /** Small canvas drawing a shape, for the rules panel. */
-export function shapeIcon(key: ShapeKey, unit = 9): HTMLCanvasElement {
+export function shapeIcon(key: ShapeKey, unit = 9, fill = '#374151'): HTMLCanvasElement {
   const pts = parseKey(key);
   let w = 0;
   let h = 0;
@@ -845,7 +852,7 @@ export function shapeIcon(key: ShapeKey, unit = 9): HTMLCanvasElement {
   c.style.height = `${h * unit + 6}px`;
   const ctx = c.getContext('2d')!;
   ctx.scale(dpr, dpr);
-  ctx.fillStyle = '#374151';
+  ctx.fillStyle = fill;
   for (const [x, y] of pts) ctx.fillRect(3 + x * unit + 0.5, 3 + y * unit + 0.5, unit - 1, unit - 1);
   return c;
 }

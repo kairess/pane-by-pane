@@ -189,9 +189,9 @@ button.primary {
 #board-wrap {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 24px;
+  padding: 16px 24px 24px;
   /* the stone wall the window is set in: holes show this, glass to fill is pale */
   background: radial-gradient(ellipse at 50% 40%, #55545d 0%, var(--stage) 45%, #33323a 100%);
   position: sticky;
@@ -217,6 +217,7 @@ button.primary {
 
 canvas#board {
   position: relative;
+  margin: auto;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -229,6 +230,153 @@ canvas#board {
 
 canvas#board.lit {
   filter: drop-shadow(0 0 14px rgba(255, 225, 170, 0.55)) drop-shadow(0 0 60px rgba(255, 205, 140, 0.35)) drop-shadow(0 0 140px rgba(255, 190, 110, 0.25));
+}
+
+/* -- goal strip: the rules of this window, always in view ------------------- */
+
+.goal-area {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  max-width: 100%;
+  margin-bottom: 8px;
+}
+
+.goal-area[hidden] {
+  display: none;
+}
+
+#goal-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.09);
+  color: #efe9df;
+  font: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.chip b {
+  font-weight: 600;
+  color: #fff;
+}
+
+.chip:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.chip:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.chip canvas {
+  display: block;
+}
+
+.chip.stars {
+  display: none;
+  color: #e6c169;
+  letter-spacing: 0.1em;
+  font-size: 11px;
+}
+
+.chip.info {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+  font-family: var(--serif);
+  font-size: 15px;
+}
+
+/* first-visit note under the strip, pointing at it */
+#coach {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 12px 14px 10px;
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--fg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  animation: coach-in 0.5s ease 0.4s both;
+}
+
+#coach[hidden] {
+  display: none;
+}
+
+#coach::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  background: var(--paper);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+#coach strong {
+  display: block;
+  font-family: var(--serif);
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+
+#coach p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+#coach button {
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+@keyframes coach-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #coach {
+    animation: none;
+  }
 }
 
 #panel {
@@ -455,11 +603,14 @@ a {
     border-top: 1px solid var(--line);
   }
   #board-wrap {
-    padding: 12px;
+    padding: 10px 12px 12px;
     position: relative;
     top: auto;
     height: auto;
     min-height: 60vh;
+  }
+  .chip.stars {
+    display: inline-flex;
   }
   #stars {
     display: none;
