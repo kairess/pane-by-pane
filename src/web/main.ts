@@ -19,7 +19,8 @@ const info = $('info');
 const starsEl = $('stars');
 const rulesInfo = $('rules-info');
 const statusEl = $('status');
-const shareEl = $<HTMLAnchorElement>('share');
+const doneEl = $('done');
+const helpDialog = $<HTMLDialogElement>('help-dialog');
 const errorMode = $<HTMLSelectElement>('error-mode');
 const goalDialog = $<HTMLDialogElement>('goal-dialog');
 const goalArea = $('goal-area');
@@ -151,7 +152,6 @@ function startGenerate(opts: GenerateOptions): void {
     genStatus.textContent = M.generatedIn(((Date.now() - t0) / 1000).toFixed(1), m.seed);
     const shared = { ...opts, seed: m.seed };
     history.replaceState(null, '', optionsToHash(shared));
-    shareEl.href = location.href;
     loadPuzzle(m.puzzle, Int32Array.from(m.solution), m.analysis.stars, m.analysis.difficulty);
     saveLast({ puzzle: m.puzzle, solution: m.solution, stars: m.analysis.stars, difficulty: m.analysis.difficulty, hash: location.hash });
   };
@@ -340,7 +340,8 @@ function refreshStatus(): void {
   if (!current) return;
   const c = checkCompletion(current.engine, current.ps);
   board.setComplete(c.done && !board.reveal);
-  if (c.done) setStatus(c.by === 'borders' ? M.completeBorders : M.completePaint, 'ok');
+  doneEl.hidden = !c.done;
+  if (c.done) setStatus(M.complete, 'ok');
   else if (c.reason === 'dangling') setStatus(M.dangling);
   else if (c.reason === 'wrong') setStatus(M.wrong);
   else setStatus('');
@@ -382,6 +383,11 @@ syncRows();
 
 form.addEventListener('submit', (e) => {
   e.preventDefault();
+  generateFromForm();
+});
+
+/** Build a window from the form, after the checks that need a word from the user. */
+function generateFromForm(): void {
   const o = readOptions();
   if (!o.rules.length) {
     warn(M.warnNoRules);
@@ -399,6 +405,35 @@ form.addEventListener('submit', (e) => {
     return;
   }
   startGenerate(o);
+}
+
+// The finished window offers the next one (same settings, fresh seed) and a share.
+$('done-new').addEventListener('click', () => {
+  $<HTMLInputElement>('seed').value = '';
+  generateFromForm();
+  $('gen-form').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+});
+$('done-share').addEventListener('click', async () => {
+  const url = location.href;
+  const btn = $<HTMLButtonElement>('done-share');
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'pane by pane', url });
+      return;
+    }
+    await navigator.clipboard.writeText(url);
+  } catch {
+    return; // cancelled, or no clipboard: the address bar still has the link
+  }
+  const label = btn.textContent;
+  btn.textContent = M.copied;
+  setTimeout(() => (btn.textContent = label), 1500);
+});
+
+$('help').addEventListener('click', () => helpDialog.showModal());
+$('help-close').addEventListener('click', () => helpDialog.close());
+helpDialog.addEventListener('click', (e) => {
+  if (e.target === helpDialog) helpDialog.close();
 });
 
 $('goal-close').addEventListener('click', () => goalDialog.close());
@@ -537,7 +572,6 @@ const last = loadLast();
 if (fromHash && last && last.hash === location.hash) {
   writeOptions(fromHash);
   loadPuzzle(last.puzzle, Int32Array.from(last.solution), last.stars, last.difficulty);
-  shareEl.href = location.href;
   genStatus.textContent = `seed ${fromHash.seed}`;
 } else if (fromHash) {
   writeOptions(fromHash);
@@ -547,7 +581,6 @@ if (fromHash && last && last.hash === location.hash) {
   const o = optionsFromHash();
   if (o) writeOptions(o);
   loadPuzzle(last.puzzle, Int32Array.from(last.solution), last.stars, last.difficulty);
-  shareEl.href = location.href;
 } else {
   // First visit: a curated window rather than an empty stage. Shape Bank only,
   // a symmetric outline with three shapes to fit, four stars.

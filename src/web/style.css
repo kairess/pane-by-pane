@@ -591,15 +591,6 @@ select {
   background: #fff;
 }
 
-details ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-}
-
-details li {
-  margin: 2px 0;
-}
-
 #rules-info {
   display: flex;
   flex-direction: column;
@@ -624,9 +615,52 @@ details li {
   background: #fff;
 }
 
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
 #status {
   min-height: 1.4em;
   font-weight: 600;
+}
+
+#done {
+  display: flex;
+  gap: 6px;
+}
+
+#done[hidden] {
+  display: none;
+}
+
+/* a button that reads as a link: the help entry under the toolbar */
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  align-self: flex-start;
+}
+
+button.link:hover {
+  background: none;
+  color: var(--fg);
+}
+
+#help-list {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#help-list li {
+  margin: 6px 0;
 }
 
 #status.ok {
