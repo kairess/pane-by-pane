@@ -361,7 +361,7 @@ function onChange(): void {
 }
 
 function updateButtons(): void {
-  for (const id of ['goal', 'undo', 'redo', 'clear']) $<HTMLButtonElement>(id).disabled = !current;
+  for (const id of ['undo', 'redo', 'clear']) $<HTMLButtonElement>(id).disabled = !current;
   if (!current) return;
   $<HTMLButtonElement>('undo').disabled = !current.ps.canUndo;
   $<HTMLButtonElement>('redo').disabled = !current.ps.canRedo;
@@ -401,7 +401,6 @@ form.addEventListener('submit', (e) => {
   startGenerate(o);
 });
 
-$('goal').addEventListener('click', openGoal);
 $('goal-close').addEventListener('click', () => goalDialog.close());
 goalDialog.addEventListener('click', (e) => {
   if (e.target === goalDialog) goalDialog.close();
