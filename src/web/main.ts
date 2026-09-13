@@ -480,5 +480,11 @@ if (fromHash && last && last.hash === location.hash) {
   if (o) writeOptions(o);
   loadPuzzle(last.puzzle, Int32Array.from(last.solution), last.stars, last.difficulty);
   shareEl.href = location.href;
+} else {
+  // First visit: a curated window rather than an empty stage. Shape Bank only,
+  // a symmetric outline with three shapes to fit, four stars.
+  const intro: GenerateOptions = { width: 7, height: 7, rules: ['shapeBank'], minSize: 2, maxSize: 6, stars: [3, 4], seed: 125, mask: 'symmetric', walls: true, roseSymbols: 2, attempts: 300 };
+  writeOptions(intro);
+  startGenerate(intro);
 }
 updateButtons();
