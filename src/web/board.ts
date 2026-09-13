@@ -5,8 +5,8 @@ import type { Hint, Mistake } from './analysis.ts';
 import { Haptics } from './haptics.ts';
 import { HUES, NONE, PlayerState, WALL, huePool } from './model.ts';
 
-/** colour of borders drawn by the player: a sketch line, unlike the dark lead of the window */
-const PLAYER_WALL = '#2457d6';
+/** colour of borders drawn by the player: a graphite sketch line, unlike the dark lead of the window */
+const PLAYER_WALL = '#5b5560';
 /** lead came: fixed walls, the frame, and the player's borders once the window is done */
 const LEAD = '#1d1c21';
 const LEAD_LIGHT = 'rgba(255,255,255,0.28)';
@@ -595,7 +595,7 @@ export class Board {
       }
       const [x1, y1, x2, y2] = seg;
       ctx.strokeStyle = bad ? '#7f1d1d' : wrong ? '#dc2626' : lit > 0 ? mix(PLAYER_WALL, LEAD, lit) : PLAYER_WALL;
-      ctx.lineWidth = fixed ? 5 : wrong ? 7 : 4 + (leadW - 4) * lit;
+      ctx.lineWidth = fixed ? 5 : wrong ? 7 : 3.5 + (leadW - 3.5) * lit;
       ctx.lineCap = fixed || lit > 0.5 ? 'square' : 'round';
       ctx.beginPath();
       ctx.moveTo(x1, y1);
