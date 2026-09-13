@@ -105,6 +105,8 @@ export interface Puzzle {
   height: number;
   /** cells (y*width+x) that are not part of the board */
   holes?: number[];
+  /** borders that are part of the board: no region may span one */
+  walls?: EdgeRef[];
   clues: Clue[];
 }
 

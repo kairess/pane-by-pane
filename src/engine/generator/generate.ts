@@ -1,10 +1,10 @@
 import { createEngine } from '../engine.ts';
-import { makeGrid, type Grid } from '../grid.ts';
+import { edgeBetween, makeGrid, type Grid } from '../grid.ts';
 import { solveLogically, type LogicalResult } from '../logical.ts';
 import { Rng } from '../random.ts';
 import type { ShapeKey } from '../shape.ts';
 import { solve } from '../solver.ts';
-import type { Clue, Labels, Puzzle, RuleKind } from '../types.ts';
+import type { Clue, EdgeRef, Labels, Puzzle, RuleKind } from '../types.ts';
 import { deriveClueUnits, flatten, type ClueUnit } from './clues.ts';
 import { isNice, randomMask, type Symmetry } from './mask.ts';
 import { catalogBank, growPartition, relabel, tilePartition } from './partition.ts';
@@ -49,6 +49,12 @@ export interface GenerateOptions {
   symmetry?: Symmetry;
   /** number of asymmetric tweaks (cells punched or restored) after the symmetric base (default random 0..3) */
   asymmetry?: number;
+  /**
+   * Fixed walls: borders that belong to the board (the window's leading).
+   * Fraction of the solution's border edges to fix, drawn as short straight
+   * runs (default 0 = none; true = random 0.1..0.3).
+   */
+  walls?: number | boolean;
   /**
    * Shape Bank on an irregular board: when the bank alone does not pin the
    * tiling, remove whole regions of the solution from the board (they become
@@ -112,9 +118,30 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
   const [starLo, starHi] = opt.stars ?? [1, 7];
   const useBank = opt.rules.includes('shapeBank');
   const sizeSep = opt.rules.includes('sizeSeparation');
+  // Rose: every region holds one of each symbol kind, so regions need at least that many cells.
+  const roseK = opt.rules.includes('rose') ? Math.max(1, opt.roseSymbols ?? 2) : 0;
+  // Rose on its own (or with markers / size separation, which only constrain
+  // regions something else outlines): the symbols must pin every region by
+  // themselves, which needs small, path-like regions (see roseSymbolCells).
+  const outlining = opt.rules.some((r) => r === 'areaNumber' || r === 'shapeBank' || r === 'polyomino');
+  const roseOnly = roseK >= 2 && !outlining;
+  // Range, twin/unlike markers, size separation and one-symbol rose cannot
+  // outline regions by themselves. Like the original's lead lines, the board's
+  // fixed walls then serve as the clue: start from every border of the
+  // solution and take walls away while the rule still pins it.
+  const wallMode = !outlining && !roseOnly;
+  const sizeLo = Math.max(minSize, roseK);
+  // (size separation needs one more size to alternate between neighbours)
+  const sizeHi = roseOnly ? Math.max(sizeLo, Math.min(maxSize, roseK + (sizeSep ? 3 : 2))) : Math.max(maxSize, roseK);
   let g = rect;
+  let walls: EdgeRef[] = [];
   const maxClues = () => opt.maxClues ?? Math.ceil(g.activeCount / 2);
-  const mkPuzzle = (clues: Clue[]): Puzzle => (g.holes.length ? { width: g.w, height: g.h, holes: [...g.holes], clues } : { width: g.w, height: g.h, clues });
+  const mkPuzzle = (clues: Clue[]): Puzzle => {
+    const p: Puzzle = { width: g.w, height: g.h, clues };
+    if (g.holes.length) p.holes = [...g.holes];
+    if (walls.length) p.walls = walls.map((w) => ({ ...w }));
+    return p;
+  };
 
   /** The oracle: is this clue set an acceptable puzzle? Returns its analysis. */
   const accept = (clues: Clue[]): LogicalResult | null => {
@@ -137,30 +164,35 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
     let solution: Labels | null;
     let decoys: ShapeKey[] = [];
     if (useBank) {
-      const sizes = { minSize: opt.bankShapeSizes?.[0], maxSize: opt.bankShapeSizes?.[1] };
+      const sizes = { minSize: Math.max(opt.bankShapeSizes?.[0] ?? 1, roseK), maxSize: opt.bankShapeSizes?.[1] };
       const bank = catalogBank(rng, { count: opt.bankSize, ...sizes });
       solution = tilePartition(g, bank, rng, { sizeSeparation: sizeSep });
       if (opt.bankDecoys) decoys = catalogBank(rng, { count: opt.bankDecoys, ...sizes, exclude: bank });
     } else {
-      solution = growPartition(g, rng, { minSize, maxSize, sizeSeparation: sizeSep });
+      solution = growPartition(g, rng, { minSize: sizeLo, maxSize: sizeHi, sizeSeparation: sizeSep });
     }
     if (!solution) {
       report('no-partition');
       continue;
     }
+    const wallRatio = opt.walls === true ? 0.1 + rng.next() * 0.2 : typeof opt.walls === 'number' ? opt.walls : 0;
+    walls = wallMode ? allBorders(g, solution) : wallRatio > 0 ? pickWalls(g, solution, rng, wallRatio) : [];
 
     // ② all true clues
     const derive = () =>
       deriveClueUnits(g, solution!, rng, {
         rules: opt.rules,
         roseSymbols: opt.roseSymbols,
+        roseForced: roseOnly,
         bankDecoys: decoys,
         numbersPerRegion: opt.numbersPerRegion,
         polyominoesPerRegion: opt.polyominoesPerRegion,
         markersPerPair: opt.markersPerPair,
       });
     let units = derive();
-    if (units.length === 0) {
+    // Every rule the puzzle was asked for must be derivable from this solution
+    // (twin markers need two same-shaped neighbours, rose needs big enough regions, …).
+    if (opt.rules.some((k) => !units.some((u) => u.kind === k))) {
       report('no-clues');
       continue;
     }
@@ -178,6 +210,7 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
       repairs++;
       g = carved.grid;
       solution = carved.solution;
+      walls = walls.filter((w) => g.active[w.a] && g.active[w.b]);
       units = derive();
       full = mkPuzzle(flatten(units));
       pinned = uniqueWith(full, solution);
@@ -192,8 +225,35 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
       continue;
     }
 
-    // ④–⑥ minimise against the oracle
-    const { kept, analysis } = minimise(units, fullAnalysis, accept, rng, opt.keepRedundant ?? 0);
+    // ④–⑥ minimise against the oracle: first the walls (wall mode), then the clues
+    let startAnalysis = fullAnalysis;
+    if (wallMode) {
+      const fullClues = full.clues;
+      let kept = rng.shuffle(walls.slice());
+      let best = fullAnalysis;
+      const without = (drop: EdgeRef[]): boolean => {
+        const before = walls;
+        walls = kept.filter((w) => !drop.includes(w));
+        const a = accept(fullClues);
+        if (a) {
+          kept = walls;
+          best = a;
+          return true;
+        }
+        walls = before;
+        return false;
+      };
+      const CHUNK = 4;
+      const settled = new Set<EdgeRef>();
+      for (let i = 0; i + CHUNK <= kept.length; i += CHUNK) {
+        const chunk = kept.slice(i, i + CHUNK);
+        if (without(chunk)) for (const w of chunk) settled.add(w);
+      }
+      for (const w of kept.slice()) if (!settled.has(w)) without([w]);
+      walls = kept;
+      startAnalysis = best;
+    }
+    const { kept, analysis } = minimise(units, startAnalysis, accept, rng, opt.keepRedundant ?? 0, opt.rules);
     const puzzle = mkPuzzle(flatten(kept));
 
     // ⑦⑧ difficulty gate
@@ -211,6 +271,59 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
     if (!best || starLo - analysis.stars < starLo - best.analysis.stars) best = result;
   }
   return best;
+}
+
+/**
+ * Fixed walls for a solution: a fraction of its border edges, chosen as short
+ * straight runs so they read as designed leading rather than noise.
+ */
+/** Every border of a solution as fixed walls (the starting point of wall mode). */
+export function allBorders(g: Grid, solution: Labels): EdgeRef[] {
+  const out: EdgeRef[] = [];
+  for (let e = 0; e < g.edges; e++) if (solution[g.edgeA[e]] !== solution[g.edgeB[e]]) out.push({ a: g.edgeA[e], b: g.edgeB[e] });
+  return out;
+}
+
+export function pickWalls(g: Grid, solution: Labels, rng: Rng, ratio: number): EdgeRef[] {
+  const border: number[] = [];
+  for (let e = 0; e < g.edges; e++) if (solution[g.edgeA[e]] !== solution[g.edgeB[e]]) border.push(e);
+  // asked for walls: show at least one
+  const target = Math.max(border.length ? 1 : 0, Math.round(border.length * ratio));
+  const chosen = new Set<number>();
+  const isBorder = new Uint8Array(g.edges);
+  for (const e of border) isBorder[e] = 1;
+  /** the two collinear continuations of an edge (or -1) */
+  const along = (e: number): number[] => {
+    const a = g.edgeA[e];
+    const b = g.edgeB[e];
+    const horizontalPair = b === a + 1; // vertical segment between a and a+1
+    const d = horizontalPair ? g.w : 1;
+    const out: number[] = [];
+    for (const s of [-d, d]) {
+      const a2 = a + s;
+      const b2 = b + s;
+      if (a2 < 0 || b2 < 0 || a2 >= g.cells || b2 >= g.cells) continue;
+      if (!horizontalPair && Math.floor(a2 / g.w) !== Math.floor(a / g.w)) continue;
+      out.push(edgeBetween(g, a2, b2));
+    }
+    return out;
+  };
+  for (let t = 0; t < 200 && chosen.size < target && border.length; t++) {
+    const start = rng.pick(border);
+    if (chosen.has(start)) continue;
+    const run = 1 + rng.int(3);
+    chosen.add(start);
+    let frontier = [start];
+    for (let k = 1; k < run && chosen.size < target; k++) {
+      const next: number[] = [];
+      for (const e of frontier) for (const n of along(e)) if (n >= 0 && isBorder[n] && !chosen.has(n)) next.push(n);
+      if (!next.length) break;
+      const pickd = rng.pick(next);
+      chosen.add(pickd);
+      frontier = [pickd];
+    }
+  }
+  return [...chosen].sort((x, y) => x - y).map((e) => ({ a: g.edgeA[e], b: g.edgeB[e] }));
 }
 
 /**
@@ -291,6 +404,7 @@ function minimise(
   accept: (clues: Clue[]) => LogicalResult | null,
   rng: Rng,
   keepRedundant: number,
+  mustShow: readonly RuleKind[] = [],
 ): { kept: ClueUnit[]; analysis: LogicalResult } {
   const locals = rng.shuffle(units.filter((u) => !isGlobal(u)));
   const globals = rng.shuffle(units.filter(isGlobal));
@@ -302,7 +416,13 @@ function minimise(
     return out;
   };
   const tryWithout = (us: ClueUnit[]): boolean => {
+    if (us.some((u) => u.required)) return false;
     for (const u of us) current.delete(u);
+    // a rule the puzzle was asked for keeps at least one clue, even a redundant one
+    if (mustShow.some((k) => ![...current].some((u) => u.kind === k))) {
+      for (const u of us) current.add(u);
+      return false;
+    }
     const a = accept(clues());
     if (a) {
       analysis = a;
@@ -322,7 +442,7 @@ function minimise(
   for (const u of [...locals, ...globals]) {
     if (settled.has(u)) continue;
     if (keepRedundant > 0 && rng.chance(keepRedundant)) continue;
-    if (tryWithout([u])) continue;
+    if (!u.required && tryWithout([u])) continue;
     for (const alt of u.weaker ?? []) {
       const altUnit: ClueUnit = { kind: u.kind, clues: alt };
       current.delete(u);

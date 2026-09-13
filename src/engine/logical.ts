@@ -118,13 +118,14 @@ export function solveLogically(puzzle: Puzzle | Engine, opts: LogicalOptions = {
 
 /** Human-readable names for techniques (used by the web UI's hints). */
 export const TECHNIQUE_LABELS: Record<string, string> = {
+  'fixed-wall': '미리 그어진 경계선입니다',
   'marker-wall': '마커가 있는 자리는 경계선입니다',
-  'same-symbol': '같은 기호끼리는 한 region이 될 수 없습니다',
-  'size-full': '이 region은 이미 최대 크기이므로 더 넓어질 수 없습니다',
+  'same-symbol': '같은 기호끼리는 한 구역이 될 수 없습니다',
+  'size-full': '이 구역은 이미 최대 넓이이므로 더 넓어질 수 없습니다',
   'merge-conflict': '양쪽을 합치면 규칙에 어긋나므로 경계선입니다',
-  'forced-exit': '이 region이 더 커질 수 있는 길이 이 한 곳뿐입니다',
-  'reach-exact': '필요한 크기를 채우려면 닿을 수 있는 칸을 전부 써야 합니다',
-  'shape-place': '허용된 모양을 놓아 보면 여기는 정해져 있습니다',
+  'forced-exit': '이 구역이 더 커질 수 있는 길이 이 한 곳뿐입니다',
+  'reach-exact': '필요한 넓이를 채우려면 닿을 수 있는 칸을 전부 써야 합니다',
+  'shape-place': '허용된 형태를 놓아 보면 여기는 정해져 있습니다',
   bifurcation: '반대로 가정하면 모순이 납니다',
 };
 
@@ -133,15 +134,23 @@ export const TECHNIQUE_LABELS: Record<string, string> = {
  * cheapest direct deduction, else the shallowest hypothetical. Used for hints.
  */
 export function nextDeduction(engine: Engine, state: State): Deduction | null {
+  return allDeductions(engine, state)?.[0] ?? null;
+}
+
+/**
+ * Every deduction available from a state, cheapest tier first (null on
+ * contradiction). Falls back to one hypothetical when no direct deduction
+ * exists. Lets a UI pick among equally cheap deductions, e.g. the one nearest
+ * to where the player is working.
+ */
+export function allDeductions(engine: Engine, state: State): Deduction[] | null {
   const out: Deduction[] = [];
   for (const r of engine.rules) if (!r.propagate(state.clone(), out)) return null;
-  const fresh = out.filter((d) => state.edge[d.edge] === 0);
-  if (fresh.length) {
-    fresh.sort((a, b) => a.tier - b.tier);
-    return fresh[0];
-  }
+  const seen = new Set<number>();
+  const fresh = out.filter((d) => state.edge[d.edge] === 0 && !seen.has(d.edge) && seen.add(d.edge));
+  if (fresh.length) return fresh.sort((a, b) => a.tier - b.tier);
   const b = bifurcate(engine, state);
-  return b ? { edge: b.edge, value: b.value, technique: 'bifurcation', tier: hypotheticalTier(b.depth) } : null;
+  return b ? [{ edge: b.edge, value: b.value, technique: 'bifurcation', tier: hypotheticalTier(b.depth) }] : [];
 }
 
 /**

@@ -217,6 +217,7 @@ export function tilePartition(g: Grid, bank: ShapeKey[], rng: Rng, opt: Partial<
   }
   let nodes = 0;
   let nextId = 0;
+  const sizeOf: number[] = [];
   const rec = (): boolean => {
     if (++nodes > nodeLimit) return false;
     let first = -1;
@@ -237,7 +238,19 @@ export function tilePartition(g: Grid, bank: ShapeKey[], rng: Rng, opt: Partial<
         cells.push(c);
       }
       if (!ok) continue;
+      // size separation: a placed neighbour of the same size would doom this branch
+      if (opt.sizeSeparation) {
+        for (const c of cells) {
+          for (const n of g.adj[c]) {
+            const l = labels[n];
+            if (l >= 0 && sizeOf[l] === cells.length) { ok = false; break; }
+          }
+          if (!ok) break;
+        }
+        if (!ok) continue;
+      }
       const id = nextId++;
+      sizeOf[id] = cells.length;
       for (const c of cells) labels[c] = id;
       if (rec()) return true;
       for (const c of cells) labels[c] = -1;

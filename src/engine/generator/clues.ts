@@ -14,12 +14,20 @@ export interface ClueUnit {
   kind: RuleKind;
   clues: Clue[];
   weaker?: Clue[][];
+  /** never removed by the minimiser (a rule the puzzle was asked to feature) */
+  required?: boolean;
 }
 
 export interface ClueOptions {
   rules: RuleKind[];
   /** Rose: number of symbol kinds (default 2; 1 = Solitude) */
   roseSymbols?: number;
+  /**
+   * Rose: only offer the rose unit when the symbols can be placed so that every
+   * cell without a symbol is a bridge inside its region (see `roseSymbolCells`).
+   * Used when rose is the only rule that outlines regions.
+   */
+  roseForced?: boolean;
   /** Shape Bank: extra shapes not used by the solution */
   bankDecoys?: ShapeKey[];
   /** Area Number: max number clues per region offered to the minimiser (default: every cell) */
@@ -59,10 +67,12 @@ export function deriveClueUnits(g: Grid, labels: Labels, rng: Rng, opt: ClueOpti
   if (has('range')) {
     const min = Math.min(...sizes);
     const max = Math.max(...sizes);
+    // A rule the puzzle was asked for stays (it may still be weakened to Maximum / Minimum).
     units.push({
       kind: 'range',
       clues: [{ type: 'range', min, max }],
       weaker: min === max ? [] : [[{ type: 'range', max }], [{ type: 'range', min }]],
+      required: true,
     });
   }
 
@@ -87,11 +97,17 @@ export function deriveClueUnits(g: Grid, labels: Labels, rng: Rng, opt: ClueOpti
     const k = opt.roseSymbols ?? 2;
     if (regions.every((r) => r.length >= k)) {
       const symbols: { cell: number; symbol: number }[] = [];
+      let ok = true;
       for (const r of regions) {
-        const cells = rng.shuffle(r.slice()).slice(0, k);
-        cells.forEach((cell, symbol) => symbols.push({ cell, symbol }));
+        const cells = roseSymbolCells(g, r, k, rng, opt.roseForced ?? false);
+        if (!cells) {
+          ok = false;
+          break;
+        }
+        rng.shuffle(cells).forEach((cell, symbol) => symbols.push({ cell, symbol }));
       }
-      units.push({ kind: 'rose', clues: [{ type: 'rose', symbolCount: k, symbols }] });
+      // Rose is what the puzzle is about when asked for: keep it through minimisation.
+      if (ok) units.push({ kind: 'rose', clues: [{ type: 'rose', symbolCount: k, symbols }], required: true });
     }
   }
 
@@ -101,10 +117,40 @@ export function deriveClueUnits(g: Grid, labels: Labels, rng: Rng, opt: ClueOpti
       const [a, b] = key.split('-').map(Number);
       if (sizes[a] === sizes[b]) { ok = false; break; }
     }
-    if (ok) units.push({ kind: 'sizeSeparation', clues: [{ type: 'sizeSeparation' }] });
+    if (ok) units.push({ kind: 'sizeSeparation', clues: [{ type: 'sizeSeparation' }], required: true });
   }
 
   return units;
+}
+
+/**
+ * Which cells of a region carry the rose symbols. A cell without a symbol can
+ * move to a neighbouring region without breaking the rose rule unless removing
+ * it would cut its own region in two, so the symbols go on the cells that are
+ * *not* cut cells (a path's two ends, a T's three tips), and the rest are
+ * bridges. When the region has more such cells than symbols this is impossible;
+ * `forced` then gives up, otherwise the cells are picked at random.
+ */
+export function roseSymbolCells(g: Grid, region: number[], k: number, rng: Rng, forced: boolean): number[] | null {
+  const inRegion = new Set(region);
+  const connectedWithout = (skip: number): boolean => {
+    const start = region.find((c) => c !== skip);
+    if (start === undefined) return true;
+    const seen = new Set([start]);
+    const stack = [start];
+    while (stack.length) {
+      const c = stack.pop()!;
+      for (const n of g.adj[c]) if (n !== skip && inRegion.has(n) && !seen.has(n)) {
+        seen.add(n);
+        stack.push(n);
+      }
+    }
+    return seen.size === region.length - 1;
+  };
+  const tips = region.length === 1 ? region.slice() : region.filter((c) => connectedWithout(c));
+  if (tips.length > k) return forced ? null : rng.shuffle(region.slice()).slice(0, k);
+  const rest = rng.shuffle(region.filter((c) => !tips.includes(c)));
+  return [...tips, ...rest.slice(0, k - tips.length)];
 }
 
 export function flatten(units: ClueUnit[]): Clue[] {

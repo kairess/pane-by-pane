@@ -1,8 +1,20 @@
 import { edgeBetween, type Grid } from '../engine/grid.ts';
 import { parseKey, type ShapeKey } from '../engine/shape.ts';
 import type { Puzzle } from '../engine/types.ts';
-import type { Hint } from './analysis.ts';
-import { HUES, NONE, PlayerState, WALL, type Snapshot } from './model.ts';
+import type { Hint, Mistake } from './analysis.ts';
+import { HUES, NONE, PlayerState, WALL, huePool } from './model.ts';
+
+/** colour of borders drawn by the player: a sketch line, unlike the dark lead of the window */
+const PLAYER_WALL = '#2457d6';
+/** lead came: fixed walls, the frame, and the player's borders once the window is done */
+const LEAD = '#1d1c21';
+const LEAD_LIGHT = 'rgba(255,255,255,0.28)';
+/** glass with no colour yet */
+const CLEAR_GLASS = '#e4e9ef';
+/** clue ink */
+const INK = '#17161a';
+const CLUE_FONT = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif";
+const REDUCED_MOTION = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const ROSE_GLYPHS = ['○', '△', '□', '☆', '◇', '♡'];
 const LONG_PRESS_MS = 450;
@@ -35,14 +47,28 @@ export class Board {
   grid: Grid | null = null;
   ps: PlayerState | null = null;
   eraser = false;
-  /** hypothesis mode base: marks that differ from it are drawn translucent */
-  hypoBase: Snapshot | null = null;
-  /** solution walls overlay */
-  overlay: Uint8Array | null = null;
-  hint: Hint | null = null;
+  /** when set, this state is drawn instead of the player's and input is ignored (solution reveal) */
+  reveal: PlayerState | null = null;
+  hint: Hint | Mistake | null = null;
+  /** 1 = where to look, 2 = what to do */
+  hintStage = 1;
   /** cells violating a rule (drawn with dark-red hatching) */
   errors: Set<number> = new Set();
+  /** fixed walls the player painted across (drawn hatched) */
+  errorEdges: Set<number> = new Set();
   private hatch: CanvasPattern | null = null;
+  private grain: CanvasPattern | null = null;
+  /** the window is finished by the player (lights up) */
+  private complete = false;
+  /** 0 = puzzle in progress, 1 = finished window; animated between the two */
+  private lit = 0;
+  private litFrom = 0;
+  private litT0 = 0;
+  private litDur = 1;
+  /** when the play of light on the finished window began */
+  private shineT0 = 0;
+  private now = 0;
+  private anim: number | null = null;
   private cell = 64;
   private pad = 12;
   private cb: BoardCallbacks;
@@ -77,11 +103,13 @@ export class Board {
     this.puzzle = p;
     this.ps = ps;
     this.grid = ps.grid;
-    this.overlay = null;
+    this.reveal = null;
     this.hint = null;
     this.errors = new Set();
-    this.hypoBase = null;
+    this.errorEdges = new Set();
     this.brush = 0;
+    this.setComplete(false);
+    this.lit = 0;
     this.layout();
   }
 
@@ -133,7 +161,7 @@ export class Board {
   // -- gestures ----------------------------------------------------------------
 
   private onDown(e: PointerEvent): void {
-    if (!this.ps || this.pointerId !== -1) return;
+    if (!this.ps || this.reveal || this.pointerId !== -1) return;
     const p = this.pos(e);
     const hit = this.hit(...p);
     if (!hit) return;
@@ -205,7 +233,7 @@ export class Board {
     const tap = !this.moved && this.gesture === 'none';
     if (tap && hit.zone === 'band') {
       // walls toggle on release only, so a drag that began near a border paints instead
-      this.change(() => ps.toggleWall(hit.edge));
+      if (!ps.fixed[hit.edge]) this.change(() => ps.toggleWall(hit.edge));
     } else if (tap && ps.paint[hit.cell]) {
       // a plain tap on a painted cell erases it (in eraser mode too)
       this.change(() => ps.erasePaint(hit.cell));
@@ -259,100 +287,193 @@ export class Board {
     return [p + ax * s, y, p + (ax + 1) * s, y];
   }
 
+  /**
+   * Completion: the window "lights up". The player's borders become leading,
+   * the glass deepens and glows, cutting lines and clues fade, and light plays
+   * over the glass for as long as the window stays finished. Never used for
+   * the solution reveal.
+   */
+  setComplete(done: boolean): void {
+    if (done === this.complete) return;
+    this.complete = done;
+    this.canvas.classList.toggle('lit', done);
+    this.canvas.parentElement?.classList.toggle('lit', done);
+    this.litFrom = this.lit;
+    this.litT0 = performance.now();
+    this.litDur = done ? 1100 : 350;
+    if (done) this.shineT0 = this.litT0 + 400;
+    if (this.anim === null) this.anim = requestAnimationFrame((t) => this.tick(t));
+  }
+
+  /** One animation frame: the light ramp, then the play of light while finished. */
+  private tick(now: number): void {
+    const k = Math.min(1, (now - this.litT0) / this.litDur);
+    const ease = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    this.lit = this.litFrom + ((this.complete ? 1 : 0) - this.litFrom) * ease;
+    // the play of light is slow: half the frame rate is plenty once the ramp is over
+    if (k < 1 || now - this.now >= 30) {
+      this.now = now;
+      this.draw();
+    }
+    // keep animating while ramping, and while the finished window shimmers (unless the viewer prefers stillness)
+    const more = k < 1 || (this.complete && !REDUCED_MOTION && !this.reveal);
+    this.anim = more ? requestAnimationFrame((t) => this.tick(t)) : null;
+  }
+
+  /**
+   * Light on the finished glass: a sunbeam sweeping across the window (strong
+   * once, then faintly every so often) and two soft patches of light that drift
+   * slowly, as if clouds were passing outside.
+   */
+  private drawShine(): void {
+    const g = this.grid!;
+    const ctx = this.ctx;
+    const s = this.cell;
+    const pad = this.pad;
+    const t = (this.now - this.shineT0) / 1000;
+    if (t < 0) return;
+    const W = g.w * s;
+    const H = g.h * s;
+    ctx.save();
+    ctx.beginPath();
+    for (let c = 0; c < g.cells; c++) if (g.active[c]) ctx.rect(pad + (c % g.w) * s, pad + Math.floor(c / g.w) * s, s, s);
+    ctx.clip();
+
+    // drifting patches of light
+    const cx = pad + W / 2;
+    const cy = pad + H / 2;
+    const R = Math.max(W, H);
+    const patches: [number, number, number, number][] = [
+      [cx + 0.32 * W * Math.sin(t * 0.21), cy + 0.28 * H * Math.cos(t * 0.17 + 1), 0.55 * R, 0.2],
+      [cx + 0.3 * W * Math.cos(t * 0.13 + 2), cy + 0.3 * H * Math.sin(t * 0.19 + 3), 0.45 * R, 0.14],
+    ];
+    const fade = Math.min(1, t / 2.5);
+    for (const [px, py, r, a] of patches) {
+      const grad = ctx.createRadialGradient(px, py, 0, px, py, r);
+      grad.addColorStop(0, `rgba(255,244,220,${a * fade})`);
+      grad.addColorStop(1, 'rgba(255,244,220,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(pad, pad, W, H);
+    }
+
+    // sunbeam: a soft diagonal band crossing the window from top-left to bottom-right
+    const PERIOD = 14;
+    const SWEEP = 2.4;
+    const phase = t % PERIOD;
+    if (phase < SWEEP) {
+      const first = t < PERIOD;
+      const u = phase / SWEEP;
+      const eased = u * u * (3 - 2 * u);
+      const d = Math.SQRT1_2;
+      const pMin = (pad + pad) * d;
+      const pMax = (pad + W + pad + H) * d;
+      const w = 0.18 * (pMax - pMin);
+      const c = pMin - w + (pMax - pMin + 2 * w) * eased;
+      const grad = ctx.createLinearGradient((c - w) * d, (c - w) * d, (c + w) * d, (c + w) * d);
+      const a = (first ? 0.8 : 0.4) * Math.sin(Math.PI * u);
+      grad.addColorStop(0, 'rgba(255,250,235,0)');
+      grad.addColorStop(0.35, `rgba(255,250,235,${a * 0.35})`);
+      grad.addColorStop(0.5, `rgba(255,252,240,${a})`);
+      grad.addColorStop(0.65, `rgba(255,250,235,${a * 0.35})`);
+      grad.addColorStop(1, 'rgba(255,250,235,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(pad, pad, W, H);
+    }
+    ctx.restore();
+  }
+
   draw(): void {
     const g = this.grid;
     const p = this.puzzle;
-    const ps = this.ps;
+    const ps = this.reveal ?? this.ps;
     const ctx = this.ctx;
     if (!g || !p || !ps) return;
     const s = this.cell;
     const pad = this.pad;
+    const lit = this.reveal ? 0 : this.lit;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    const base = this.hypoBase;
     if (!this.hatch) this.hatch = makeHatch(ctx);
+    if (!this.grain) this.grain = makeGrain(ctx);
+    const cellX = (c: number) => pad + (c % g.w) * s;
+    const cellY = (c: number) => pad + Math.floor(c / g.w) * s;
 
-    // cell fills
+    // -- glass ------------------------------------------------------------------
+    // Each paint region is one pane: a flat colour, then light coming through
+    // from behind (a radial highlight over the pane), then the grain of the glass.
+    const panes = new Map<number, { x0: number; y0: number; x1: number; y1: number; cells: number[] }>();
     for (let c = 0; c < g.cells; c++) {
       if (!g.active[c]) continue;
+      const id = ps.paint[c];
       const x = c % g.w;
       const y = (c - x) / g.w;
-      const id = ps.paint[c];
-      ctx.globalAlpha = base && base.paint[c] !== id ? 0.45 : 1;
-      ctx.fillStyle = id ? HUES[ps.hue[id] ?? 0] : '#fff';
-      ctx.fillRect(pad + x * s, pad + y * s, s, s);
-      ctx.globalAlpha = 1;
+      let b = panes.get(id);
+      if (!b) panes.set(id, (b = { x0: x, y0: y, x1: x, y1: y, cells: [] }));
+      b.x0 = Math.min(b.x0, x);
+      b.y0 = Math.min(b.y0, y);
+      b.x1 = Math.max(b.x1, x);
+      b.y1 = Math.max(b.y1, y);
+      b.cells.push(c);
+    }
+    for (const [id, b] of panes) {
+      const painted = id > 0;
+      const base = painted ? HUES[ps.hue[id] ?? 0] : CLEAR_GLASS;
+      ctx.save();
+      ctx.beginPath();
+      for (const c of b.cells) ctx.rect(cellX(c), cellY(c), s, s);
+      ctx.clip();
+      ctx.fillStyle = painted && lit > 0 ? mix(base, deepen(base), lit) : base;
+      ctx.fillRect(pad + b.x0 * s, pad + b.y0 * s, (b.x1 - b.x0 + 1) * s, (b.y1 - b.y0 + 1) * s);
+      if (painted) {
+        // light behind the pane, centred a little above the middle
+        const cx = pad + ((b.x0 + b.x1 + 1) / 2) * s;
+        const cy = pad + ((b.y0 + b.y1 + 1) / 2) * s - s * 0.15;
+        const r = Math.max(b.x1 - b.x0 + 1, b.y1 - b.y0 + 1) * s * 0.8;
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        grad.addColorStop(0, `rgba(255,255,255,${0.3 + 0.25 * lit})`);
+        grad.addColorStop(0.55, `rgba(255,255,255,${0.08 + 0.1 * lit})`);
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(cx - r, cy - r, 2 * r, 2 * r);
+        ctx.fillStyle = `rgba(20,10,40,${0.05 * (1 - lit)})`;
+        ctx.fillRect(pad + b.x0 * s, pad + b.y0 * s, (b.x1 - b.x0 + 1) * s, (b.y1 - b.y0 + 1) * s);
+      } else {
+        // clear glass: cool, with a faint sheen from the top-left
+        const grad = ctx.createLinearGradient(pad + b.x0 * s, pad + b.y0 * s, pad + (b.x1 + 1) * s, pad + (b.y1 + 1) * s);
+        grad.addColorStop(0, 'rgba(255,255,255,0.7)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(pad + b.x0 * s, pad + b.y0 * s, (b.x1 - b.x0 + 1) * s, (b.y1 - b.y0 + 1) * s);
+      }
+      if (this.grain) {
+        ctx.globalAlpha = painted ? 0.7 : 0.35;
+        ctx.fillStyle = this.grain;
+        ctx.fillRect(pad + b.x0 * s, pad + b.y0 * s, (b.x1 - b.x0 + 1) * s, (b.y1 - b.y0 + 1) * s);
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    }
+    for (let c = 0; c < g.cells; c++) {
+      if (!g.active[c]) continue;
       if (this.errors.has(c) && this.hatch) {
         ctx.fillStyle = this.hatch;
-        ctx.fillRect(pad + x * s, pad + y * s, s, s);
+        ctx.fillRect(cellX(c), cellY(c), s, s);
       }
       if (this.areaCells?.includes(c)) {
-        ctx.fillStyle = 'rgba(37,99,235,0.18)';
-        ctx.fillRect(pad + x * s, pad + y * s, s, s);
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillRect(cellX(c), cellY(c), s, s);
       }
     }
 
-    // dotted grid between active cells (dash count shrinks with cell size, like the original)
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 1;
-    const dashes = s >= 56 ? 8 : s >= 40 ? 7 : 6;
-    const unit = s / (dashes * 2 - 1);
-    ctx.setLineDash([unit, unit]);
-    ctx.beginPath();
-    for (let e = 0; e < g.edges; e++) {
-      if (ps.edge[e] !== NONE) continue;
-      const [x1, y1, x2, y2] = this.edgeSegment(e);
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-    }
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // clues in cells
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (const clue of p.clues) {
-      if (clue.type === 'areaNumber') this.text(String(clue.value), clue.cell, `${Math.round(s * 0.42)}px sans-serif`, '#111');
-      else if (clue.type === 'rose') for (const sym of clue.symbols) this.text(ROSE_GLYPHS[sym.symbol] ?? String(sym.symbol), sym.cell, `${Math.round(s * 0.42)}px sans-serif`, '#111');
-      else if (clue.type === 'polyomino') this.miniShape(clue.shape, clue.cell);
-    }
-
-    // hint
-    if (this.hint) {
-      const [x1, y1, x2, y2] = this.edgeSegment(this.hint.edge);
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 6;
-      ctx.lineCap = 'round';
-      ctx.setLineDash(this.hint.value === 'wall' ? [] : [4, 6]);
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // walls
-    ctx.lineCap = 'round';
-    for (let e = 0; e < g.edges; e++) {
-      if (ps.edge[e] !== WALL) continue;
-      const [x1, y1, x2, y2] = this.edgeSegment(e);
-      ctx.strokeStyle = '#111';
-      ctx.lineWidth = 4;
-      ctx.globalAlpha = base && base.edge[e] !== WALL ? 0.4 : 1;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-
-    // solution overlay
-    if (this.overlay) {
-      ctx.strokeStyle = 'rgba(220,38,38,0.7)';
-      ctx.lineWidth = 3;
-      ctx.setLineDash([6, 4]);
+    // cutting lines between cells whose border is undecided (they vanish when the window is done)
+    if (lit < 1) {
+      ctx.strokeStyle = `rgba(30,25,40,${0.28 * (1 - lit)})`;
+      ctx.lineWidth = 1;
+      const dashes = s >= 56 ? 8 : s >= 40 ? 7 : 6;
+      const unit = s / (dashes * 2 - 1);
+      ctx.setLineDash([unit, unit]);
       ctx.beginPath();
       for (let e = 0; e < g.edges; e++) {
-        if (!this.overlay[e]) continue;
+        if (ps.edge[e] !== NONE || ps.fixed[e]) continue;
         const [x1, y1, x2, y2] = this.edgeSegment(e);
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
@@ -361,11 +482,90 @@ export class Board {
       ctx.setLineDash([]);
     }
 
-    // outer border: every side of an active cell facing a hole or the outside
-    ctx.strokeStyle = '#111';
-    ctx.lineWidth = 4;
-    ctx.lineCap = 'square';
-    ctx.beginPath();
+    // clues, etched into the glass (they fade once the window is done)
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.globalAlpha = 1 - 0.6 * lit;
+    const clueFont = `600 ${Math.round(s * 0.42)}px ${CLUE_FONT}`;
+    for (const clue of p.clues) {
+      if (clue.type === 'areaNumber') this.text(String(clue.value), clue.cell, clueFont);
+      else if (clue.type === 'rose') for (const sym of clue.symbols) this.text(ROSE_GLYPHS[sym.symbol] ?? String(sym.symbol), sym.cell, `${Math.round(s * 0.42)}px sans-serif`);
+      else if (clue.type === 'polyomino') this.miniShape(clue.shape, clue.cell);
+    }
+    ctx.globalAlpha = 1;
+    if (lit > 0 && this.complete) this.drawShine();
+
+    // hint
+    if (this.hint?.kind === 'step') {
+      const h = this.hint;
+      // stage 1: tint the region the reasoning is about
+      ctx.fillStyle = 'rgba(255,196,0,0.4)';
+      for (const c of h.region) ctx.fillRect(cellX(c), cellY(c), s, s);
+      if (this.hintStage >= 2) {
+        if (h.value === 'wall') {
+          const [x1, y1, x2, y2] = this.edgeSegment(h.edge);
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 7;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+        } else if (h.focus >= 0) {
+          // the cell to add: outlined, with an arrow-ish dash on the shared edge
+          const fx = cellX(h.focus);
+          const fy = cellY(h.focus);
+          ctx.fillStyle = 'rgba(255,196,0,0.4)';
+          ctx.fillRect(fx, fy, s, s);
+          ctx.strokeStyle = '#d97706';
+          ctx.lineWidth = 3;
+          ctx.setLineDash([5, 4]);
+          ctx.strokeRect(fx + 3, fy + 3, s - 6, s - 6);
+          ctx.setLineDash([]);
+        }
+      }
+    } else if (this.hint?.kind === 'mistake') {
+      const m = this.hint;
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([5, 4]);
+      for (const c of m.cells) ctx.strokeRect(cellX(c) + 3, cellY(c) + 3, s - 6, s - 6);
+      ctx.setLineDash([]);
+      // a wrong wall is recoloured in the wall pass below
+    }
+
+    // -- leading -----------------------------------------------------------------
+    // Fixed walls and the frame are the lead came of the window. The player's
+    // borders are a blue sketch until the window is done, then they become lead too.
+    const lead: [number, number, number, number][] = [];
+    const leadW = 5 + 1.5 * lit;
+    for (let e = 0; e < g.edges; e++) {
+      const fixed = ps.fixed[e] === 1;
+      if (!fixed && ps.edge[e] !== WALL) continue;
+      const seg = this.edgeSegment(e);
+      const bad = this.errorEdges.has(e);
+      const wrong = this.hint?.kind === 'mistake' && this.hint.edge === e;
+      if (fixed && !bad) {
+        lead.push(seg);
+        continue;
+      }
+      const [x1, y1, x2, y2] = seg;
+      ctx.strokeStyle = bad ? '#7f1d1d' : wrong ? '#dc2626' : lit > 0 ? mix(PLAYER_WALL, LEAD, lit) : PLAYER_WALL;
+      ctx.lineWidth = fixed ? 5 : wrong ? 7 : 4 + (leadW - 4) * lit;
+      ctx.lineCap = fixed || lit > 0.5 ? 'square' : 'round';
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      if (bad && this.hatch) {
+        // a hatched band across the wall, like the original's error mark
+        const t = Math.max(10, s * 0.28);
+        ctx.fillStyle = this.hatch;
+        if (x1 === x2) ctx.fillRect(x1 - t / 2, y1, t, y2 - y1);
+        else ctx.fillRect(x1, y1 - t / 2, x2 - x1, t);
+      }
+    }
+    // outer frame: every side of an active cell facing a hole or the outside
     const act = (nx: number, ny: number) => nx >= 0 && ny >= 0 && nx < g.w && ny < g.h && g.active[ny * g.w + nx] === 1;
     for (let c = 0; c < g.cells; c++) {
       if (!g.active[c]) continue;
@@ -373,15 +573,14 @@ export class Board {
       const y = (c - x) / g.w;
       const X0 = pad + x * s;
       const Y0 = pad + y * s;
-      if (!act(x - 1, y)) { ctx.moveTo(X0, Y0); ctx.lineTo(X0, Y0 + s); }
-      if (!act(x + 1, y)) { ctx.moveTo(X0 + s, Y0); ctx.lineTo(X0 + s, Y0 + s); }
-      if (!act(x, y - 1)) { ctx.moveTo(X0, Y0); ctx.lineTo(X0 + s, Y0); }
-      if (!act(x, y + 1)) { ctx.moveTo(X0, Y0 + s); ctx.lineTo(X0 + s, Y0 + s); }
+      if (!act(x - 1, y)) lead.push([X0, Y0, X0, Y0 + s]);
+      if (!act(x + 1, y)) lead.push([X0 + s, Y0, X0 + s, Y0 + s]);
+      if (!act(x, y - 1)) lead.push([X0, Y0, X0 + s, Y0]);
+      if (!act(x, y + 1)) lead.push([X0, Y0 + s, X0 + s, Y0 + s]);
     }
-    ctx.stroke();
-    ctx.lineCap = 'round';
+    this.strokeLead(lead, leadW);
 
-    // edge markers (gemini / delta)
+    // edge markers (gemini / delta), like small solder tags on the leading
     for (const clue of p.clues) {
       if (clue.type !== 'gemini' && clue.type !== 'delta') continue;
       const e = edgeBetween(g, clue.edge.a, clue.edge.b);
@@ -389,14 +588,14 @@ export class Board {
       const mx = (x1 + x2) / 2;
       const my = (y1 + y2) / 2;
       const r = s * 0.17;
-      ctx.fillStyle = '#fff';
-      ctx.strokeStyle = '#111';
+      ctx.fillStyle = '#fbf7ef';
+      ctx.strokeStyle = LEAD;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(mx, my, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = '#111';
+      ctx.fillStyle = LEAD;
       ctx.font = `${Math.round(r * 1.5)}px sans-serif`;
       ctx.fillText(clue.type === 'gemini' ? '=' : '≠', mx, my + 0.5);
     }
@@ -411,23 +610,60 @@ export class Board {
       }
       const cx = pad + (sx / this.areaCells.length) * s;
       const cy = pad + (sy / this.areaCells.length) * s;
-      ctx.fillStyle = 'rgba(17,24,39,0.85)';
+      ctx.fillStyle = 'rgba(28,28,33,0.88)';
       ctx.beginPath();
       ctx.arc(cx, cy, s * 0.42, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = '#fbf7ef';
       ctx.font = `bold ${Math.round(s * 0.45)}px sans-serif`;
       ctx.fillText(String(this.areaCells.length), cx, cy + 1);
     }
   }
 
-  private text(t: string, cell: number, font: string, color: string): void {
+  /** Lead came: a dark bar with a thin light catching its upper-left edge. */
+  private strokeLead(segs: [number, number, number, number][], w: number): void {
+    const ctx = this.ctx;
+    ctx.lineCap = 'square';
+    ctx.strokeStyle = LEAD;
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    for (const [x1, y1, x2, y2] of segs) {
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = LEAD_LIGHT;
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = 'butt';
+    ctx.beginPath();
+    const o = w / 2 - 1.4;
+    for (const [x1, y1, x2, y2] of segs) {
+      if (x1 === x2) {
+        ctx.moveTo(x1 - o, y1 + 1);
+        ctx.lineTo(x2 - o, y2 - 1);
+      } else {
+        ctx.moveTo(x1 + 1, y1 - o);
+        ctx.lineTo(x2 - 1, y2 - o);
+      }
+    }
+    ctx.stroke();
+    ctx.lineCap = 'round';
+  }
+
+  private text(t: string, cell: number, font: string): void {
     const g = this.grid!;
     const x = cell % g.w;
     const y = (cell - x) / g.w;
-    this.ctx.fillStyle = color;
-    this.ctx.font = font;
-    this.ctx.fillText(t, this.pad + (x + 0.5) * this.cell, this.pad + (y + 0.5) * this.cell + 1);
+    const ctx = this.ctx;
+    const px = this.pad + (x + 0.5) * this.cell;
+    const py = this.pad + (y + 0.5) * this.cell + 1;
+    ctx.font = font;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(t, px, py);
+    ctx.fillStyle = INK;
+    ctx.fillText(t, px, py);
   }
 
   private miniShape(key: ShapeKey, cell: number): void {
@@ -444,12 +680,12 @@ export class Board {
     const unit = (this.cell * 0.62) / Math.max(w, h);
     const ox = this.pad + (x + 0.5) * this.cell - (w * unit) / 2;
     const oy = this.pad + (y + 0.5) * this.cell - (h * unit) / 2;
-    this.ctx.fillStyle = '#374151';
+    this.ctx.fillStyle = INK;
     for (const [px, py] of pts) this.ctx.fillRect(ox + px * unit + 0.5, oy + py * unit + 0.5, unit - 1, unit - 1);
   }
 }
 
-/** Diagonal dark-red hatching used to mark rule violations. */
+/** Hatching used to mark rule violations: dark red with a light stripe so it reads on any glass. */
 function makeHatch(ctx: CanvasRenderingContext2D): CanvasPattern | null {
   const c = document.createElement('canvas');
   const dpr = window.devicePixelRatio || 1;
@@ -458,19 +694,102 @@ function makeHatch(ctx: CanvasRenderingContext2D): CanvasPattern | null {
   c.height = size * dpr;
   const p = c.getContext('2d')!;
   p.scale(dpr, dpr);
-  p.strokeStyle = 'rgba(127,29,29,0.55)';
-  p.lineWidth = 2;
-  p.beginPath();
-  p.moveTo(-2, size + 2);
-  p.lineTo(size + 2, -2);
-  p.moveTo(-2, 2);
-  p.lineTo(2, -2);
-  p.moveTo(size - 2, size + 2);
-  p.lineTo(size + 2, size - 2);
-  p.stroke();
+  const line = (offset: number, style: string, width: number) => {
+    p.strokeStyle = style;
+    p.lineWidth = width;
+    p.beginPath();
+    p.moveTo(-2 + offset, size + 2 + offset);
+    p.lineTo(size + 2 + offset, -2 + offset);
+    p.moveTo(-2 + offset, 2 + offset);
+    p.lineTo(2 + offset, -2 + offset);
+    p.moveTo(size - 2 + offset, size + 2 + offset);
+    p.lineTo(size + 2 + offset, size - 2 + offset);
+    p.stroke();
+  };
+  line(0, 'rgba(110,20,20,0.75)', 2.2);
+  line(1.6, 'rgba(255,255,255,0.55)', 0.8);
   const pat = ctx.createPattern(c, 'repeat');
   if (pat && 'setTransform' in pat) pat.setTransform(new DOMMatrix().scale(1 / dpr));
   return pat;
+}
+
+/** The grain of hand-rolled glass: faint diagonal streaks and a little mottling. */
+function makeGrain(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+  const c = document.createElement('canvas');
+  const dpr = window.devicePixelRatio || 1;
+  const size = 160;
+  c.width = size * dpr;
+  c.height = size * dpr;
+  const p = c.getContext('2d')!;
+  p.scale(dpr, dpr);
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  p.lineCap = 'round';
+  for (let i = 0; i < 22; i++) {
+    const x = rnd() * size * 2 - size;
+    const len = 40 + rnd() * 100;
+    const light = rnd() < 0.6;
+    p.strokeStyle = light ? `rgba(255,255,255,${0.03 + rnd() * 0.05})` : `rgba(0,0,30,${0.02 + rnd() * 0.03})`;
+    p.lineWidth = 3 + rnd() * 9;
+    p.beginPath();
+    // streaks are tiled: draw each one three times so the pattern wraps
+    for (const dx of [-size, 0, size]) {
+      p.moveTo(x + dx, size);
+      p.lineTo(x + dx + len, size - len);
+    }
+    p.stroke();
+  }
+  for (let i = 0; i < 90; i++) {
+    const light = rnd() < 0.65;
+    p.fillStyle = light ? `rgba(255,255,255,${0.02 + rnd() * 0.04})` : `rgba(0,0,30,${0.015 + rnd() * 0.025})`;
+    const x = rnd() * size;
+    const y = rnd() * size;
+    const rr = 6 + rnd() * 18;
+    // mottling is tiled too: draw near the edges again so the pattern wraps
+    for (const dx of [-size, 0, size]) for (const dy of [-size, 0, size]) {
+      p.beginPath();
+      p.arc(x + dx, y + dy, rr, 0, Math.PI * 2);
+      p.fill();
+    }
+  }
+  const pat = ctx.createPattern(c, 'repeat');
+  if (pat && 'setTransform' in pat) pat.setTransform(new DOMMatrix().scale(1 / dpr));
+  return pat;
+}
+
+function hexToRgb(h: string): [number, number, number] {
+  return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+}
+
+/** Linear blend of two hex colours (t = 0 → a, t = 1 → b). */
+function mix(a: string, b: string, t: number): string {
+  const [r1, g1, b1] = hexToRgb(a);
+  const [r2, g2, b2] = hexToRgb(b);
+  return `rgb(${Math.round(r1 + (r2 - r1) * t)},${Math.round(g1 + (g2 - g1) * t)},${Math.round(b1 + (b2 - b1) * t)})`;
+}
+
+/** A richer version of a glass colour: more saturated and a touch darker. */
+function deepen(hex: string): string {
+  const [r, g, b] = hexToRgb(hex);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2 / 255;
+  let h = 0;
+  const d = (max - min) / 255;
+  const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / 255 / d) % 6;
+    else if (max === g) h = (b - r) / 255 / d + 2;
+    else h = (r - g) / 255 / d + 4;
+  }
+  const s2 = Math.min(1, sat * 1.25 + 0.1);
+  const l2 = Math.max(0, l - 0.08);
+  const c = (1 - Math.abs(2 * l2 - 1)) * s2;
+  const x = c * (1 - Math.abs((h % 2) - 1));
+  const m = l2 - c / 2;
+  const [r2, g2, b2] = h < 1 ? [c, x, 0] : h < 2 ? [x, c, 0] : h < 3 ? [0, c, x] : h < 4 ? [0, x, c] : h < 5 ? [x, 0, c] : [c, 0, x];
+  const to = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return `#${to(r2)}${to(g2)}${to(b2)}`;
 }
 
 /** Wall edges of a label array. */
@@ -478,6 +797,34 @@ export function wallsOf(g: Grid, labels: ArrayLike<number>): Uint8Array {
   const out = new Uint8Array(g.edges);
   for (let e = 0; e < g.edges; e++) out[e] = labels[g.edgeA[e]] !== labels[g.edgeB[e]] ? 1 : 0;
   return out;
+}
+
+/**
+ * A solution as the player would have marked it: every region painted (with
+ * neighbouring regions in different hues) and its borders drawn.
+ */
+export function solutionView(puzzle: Puzzle, labels: ArrayLike<number>): PlayerState {
+  const ps = new PlayerState(puzzle);
+  const g = ps.grid;
+  const hue: number[] = [];
+  for (let c = 0; c < g.cells; c++) {
+    const l = labels[c];
+    if (l < 0) continue;
+    if (hue[l] === undefined) {
+      // greedy colouring: avoid hues already given to any neighbouring region
+      const used = new Set<number>();
+      for (let d = 0; d < g.cells; d++) {
+        if (labels[d] !== l) continue;
+        for (const n of g.adj[d]) if (labels[n] !== l && labels[n] >= 0 && hue[labels[n]] !== undefined) used.add(hue[labels[n]]);
+      }
+      const pool = huePool(used);
+      hue[l] = pool.length ? pool[l % pool.length] : l % HUES.length;
+    }
+    ps.paint[c] = l + 1;
+    ps.hue[l + 1] = hue[l];
+  }
+  for (let e = 0; e < g.edges; e++) if (labels[g.edgeA[e]] !== labels[g.edgeB[e]]) ps.setEdge(e, WALL);
+  return ps;
 }
 
 /** Small canvas drawing a shape, for the rules panel. */

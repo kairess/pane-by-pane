@@ -3,9 +3,12 @@ import { shapeName } from '../engine/shape.ts';
 import { RULE_KINDS, type Puzzle, type RuleKind } from '../engine/types.ts';
 import type { GenerateOptions } from '../engine/generator/generate.ts';
 import { checkCompletion, findViolations, nextHint } from './analysis.ts';
-import { Board, shapeIcon, wallsOf } from './board.ts';
-import { PlayerState } from './model.ts';
+import { Board, shapeIcon, solutionView } from './board.ts';
+import { PlayerState, WALL } from './model.ts';
 import type { WorkerIn, WorkerOut } from './worker.ts';
+import { M, applyStatic, lang, setLang } from './i18n.ts';
+
+applyStatic();
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -18,6 +21,18 @@ const rulesInfo = $('rules-info');
 const statusEl = $('status');
 const shareEl = $<HTMLAnchorElement>('share');
 const errorMode = $<HTMLSelectElement>('error-mode');
+const goalDialog = $<HTMLDialogElement>('goal-dialog');
+const revealDialog = $<HTMLDialogElement>('reveal-dialog');
+const revealBtn = $<HTMLButtonElement>('reveal');
+const warnDialog = $<HTMLDialogElement>('warn-dialog');
+
+/** A warning the user has to see: shown as a modal, not a status line. */
+function warn(text: string): void {
+  $('warn-text').textContent = text;
+  warnDialog.showModal();
+}
+$('warn-close').addEventListener('click', () => warnDialog.close());
+$('lang').addEventListener('click', () => setLang(lang === 'ko' ? 'en' : 'ko'));
 
 interface Current {
   puzzle: Puzzle;
@@ -32,7 +47,7 @@ let worker: Worker | null = null;
 const board = new Board($<HTMLCanvasElement>('board'), {
   onChange: () => onChange(),
   onArea: (info) => {
-    if (info) setStatus(`이 영역: ${info.count}칸`);
+    if (info) setStatus(M.areaOf(info.count));
     else refreshStatus();
   },
 });
@@ -52,6 +67,8 @@ function readOptions(): GenerateOptions {
     stars: [num('starLo'), num('starHi')],
     seed: seedText ? Number(seedText) >>> 0 : undefined,
     mask: $<HTMLInputElement>('mask').checked ? 'symmetric' : 'rect',
+    walls: $<HTMLInputElement>('walls').checked,
+    roseSymbols: Math.min(4, Math.max(1, num('rose') || 2)),
     attempts: 300,
   };
 }
@@ -64,8 +81,11 @@ function writeOptions(o: GenerateOptions): void {
   $<HTMLInputElement>('starLo').value = String(o.stars?.[0] ?? 1);
   $<HTMLInputElement>('starHi').value = String(o.stars?.[1] ?? 7);
   $<HTMLInputElement>('mask').checked = o.mask === 'symmetric';
+  $<HTMLInputElement>('walls').checked = !!o.walls;
+  $<HTMLInputElement>('rose').value = String(o.roseSymbols ?? 2);
   for (const i of form.querySelectorAll<HTMLInputElement>('#rules input')) i.checked = o.rules.includes(i.value as RuleKind);
   $('size-row').hidden = o.rules.includes('shapeBank');
+  $('rose-row').hidden = !o.rules.includes('rose');
 }
 
 function optionsToHash(o: GenerateOptions): string {
@@ -77,6 +97,8 @@ function optionsToHash(o: GenerateOptions): string {
     max: String(o.maxSize ?? 6),
     stars: `${o.stars?.[0] ?? 1}-${o.stars?.[1] ?? 7}`,
     mask: o.mask === 'symmetric' ? '1' : '0',
+    walls: o.walls ? '1' : '0',
+    rose: String(o.roseSymbols ?? 2),
     seed: String(o.seed ?? ''),
   });
   return `#${q}`;
@@ -96,6 +118,8 @@ function optionsFromHash(): GenerateOptions | null {
     maxSize: Number(q.get('max') ?? 6),
     stars: [lo, hi ?? lo],
     mask: q.get('mask') === '1' ? 'symmetric' : 'rect',
+    walls: q.get('walls') === '1',
+    roseSymbols: Number(q.get('rose') ?? 2),
     seed: Number(q.get('seed')),
     attempts: 300,
   };
@@ -107,20 +131,21 @@ function startGenerate(opts: GenerateOptions): void {
   if (worker) worker.terminate();
   worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   genBtn.disabled = true;
-  genStatus.textContent = '생성 중…';
+  genStatus.textContent = M.generating;
   const t0 = Date.now();
   worker.onmessage = (ev: MessageEvent<WorkerOut>) => {
     const m = ev.data;
     if (m.type === 'progress') {
-      genStatus.textContent = `생성 중… (시도 ${m.attempt})`;
+      genStatus.textContent = M.generatingAttempt(m.attempt);
       return;
     }
     genBtn.disabled = false;
     if (m.type === 'none') {
-      genStatus.textContent = '이 설정으로는 퍼즐을 못 찾았습니다. 룰 조합이나 별점을 바꿔보세요.';
+      genStatus.textContent = '';
+      warn(M.warnNoPuzzle);
       return;
     }
-    genStatus.textContent = `${((Date.now() - t0) / 1000).toFixed(1)}s · seed ${m.seed}`;
+    genStatus.textContent = M.generatedIn(((Date.now() - t0) / 1000).toFixed(1), m.seed);
     const shared = { ...opts, seed: m.seed };
     history.replaceState(null, '', optionsToHash(shared));
     shareEl.href = location.href;
@@ -129,7 +154,7 @@ function startGenerate(opts: GenerateOptions): void {
   };
   worker.onerror = (e) => {
     genBtn.disabled = false;
-    genStatus.textContent = `오류: ${e.message}`;
+    genStatus.textContent = M.error(e.message);
   };
   worker.postMessage({ type: 'generate', opts } satisfies WorkerIn);
 }
@@ -191,42 +216,47 @@ function loadPuzzle(p: Puzzle, solution: Int32Array, stars: number, difficulty: 
   current = { puzzle: p, solution, engine: createEngine(p), ps, key };
   board.eraser = false;
   $('eraser').classList.remove('active');
-  board.hypoBase = null;
-  $('hypo').hidden = false;
-  $('hypo-controls').hidden = true;
   board.setPuzzle(p, ps);
+  resetHint();
+  revealBtn.textContent = M.reveal;
   info.hidden = false;
-  starsEl.textContent = '★'.repeat(stars) + '☆'.repeat(7 - stars) + `  (${difficulty})`;
+  starsEl.textContent = '★'.repeat(stars) + '☆'.repeat(7 - stars);
+  starsEl.title = M.difficultyLabel(String(stars), String(difficulty));
+  $('goal-stars').textContent = M.difficultyLabel('★'.repeat(stars) + '☆'.repeat(7 - stars), String(difficulty));
   rulesInfo.replaceChildren();
-  const add = (text: string, extra?: HTMLElement[]) => {
+  const add = (name: string, text: string, extra?: HTMLElement[]) => {
     const div = document.createElement('div');
     div.className = 'rule';
-    div.append(text, ...(extra ?? []));
+    const b = document.createElement('b');
+    b.textContent = name;
+    div.append(b, text, ...(extra ?? []));
     rulesInfo.append(div);
   };
   const kinds = new Set(p.clues.map((c) => c.type));
-  if (kinds.has('areaNumber')) add('숫자: 그 숫자가 속한 region의 칸 수');
-  if (kinds.has('polyomino')) add('도형 아이콘: 그 region의 모양');
+  if (p.walls?.length) add(M.rule.fixedWalls, M.desc.fixedWalls);
+  if (kinds.has('areaNumber')) add(M.rule.areaNumber, M.desc.areaNumber);
   for (const c of p.clues) {
     if (c.type === 'range') {
-      const lo = c.min ?? 1;
+      const lo = c.min;
       const hi = c.max;
-      add(c.min !== undefined && c.max !== undefined && c.min === c.max ? `모든 region의 크기 = ${c.min}` : `모든 region의 크기: ${hi === undefined ? `${lo} 이상` : c.min === undefined ? `${hi} 이하` : `${lo}~${hi}`}`);
+      if (lo !== undefined && hi !== undefined && lo === hi) add(M.rule.precision, M.desc.precision(lo));
+      else add(M.rule.range, M.desc.range(lo, hi));
     } else if (c.type === 'shapeBank') {
       const icons = c.shapes.map((k) => {
         const el = shapeIcon(k);
         el.title = shapeName(k);
         return el;
       });
-      add('모든 region은 이 모양 중 하나 (회전·반사 가능):', icons);
+      add(M.rule.shapeBank, M.desc.shapeBank, icons);
     } else if (c.type === 'rose') {
-      add(`모든 region은 각 기호(${['○', '△', '□', '☆'].slice(0, c.symbolCount).join(' ')})를 정확히 하나씩 포함`);
+      add(M.rule.rose, M.desc.rose(['○', '△', '□', '☆'].slice(0, c.symbolCount).join(' ')));
     } else if (c.type === 'sizeSeparation') {
-      add('인접한 두 region의 크기는 서로 다름');
+      add(M.rule.sizeSeparation, M.desc.sizeSeparation);
     }
   }
-  if (kinds.has('gemini')) add('= : 양쪽 region의 모양이 같음 (경계)');
-  if (kinds.has('delta')) add('≠ : 양쪽 region의 모양이 다름 (경계)');
+  if (kinds.has('polyomino')) add(M.rule.polyomino, M.desc.polyomino);
+  if (kinds.has('gemini')) add(M.rule.gemini, M.desc.gemini);
+  if (kinds.has('delta')) add(M.rule.delta, M.desc.delta);
   refreshStatus();
   updateButtons();
 }
@@ -239,16 +269,20 @@ function setStatus(text: string, cls = ''): void {
 function refreshStatus(): void {
   if (!current) return;
   const c = checkCompletion(current.engine, current.ps);
-  if (c.done) setStatus(c.by === 'borders' ? '완성! ✓ (경계선)' : '완성! ✓ (색칠)', 'ok');
-  else if (c.reason === 'dangling') setStatus('끊긴 벽이 있습니다');
-  else if (c.reason === 'wrong') setStatus('전부 칠했지만 규칙에 맞지 않습니다');
+  board.setComplete(c.done && !board.reveal);
+  if (c.done) setStatus(c.by === 'borders' ? M.completeBorders : M.completePaint, 'ok');
+  else if (c.reason === 'dangling') setStatus(M.dangling);
+  else if (c.reason === 'wrong') setStatus(M.wrong);
   else setStatus('');
 }
 
 function onChange(): void {
   if (!current) return;
-  board.hint = null;
-  board.errors = errorMode.value === 'always' ? findViolations(current.puzzle, current.ps) : new Set();
+  if (board.reveal) hideSolution();
+  resetHint();
+  const v = errorMode.value === 'always' ? findViolations(current.puzzle, current.ps) : { cells: new Set<number>(), edges: new Set<number>() };
+  board.errors = v.cells;
+  board.errorEdges = v.edges;
   board.draw();
   refreshStatus();
   updateButtons();
@@ -256,57 +290,53 @@ function onChange(): void {
 }
 
 function updateButtons(): void {
+  for (const id of ['goal', 'undo', 'redo', 'clear']) $<HTMLButtonElement>(id).disabled = !current;
   if (!current) return;
   $<HTMLButtonElement>('undo').disabled = !current.ps.canUndo;
   $<HTMLButtonElement>('redo').disabled = !current.ps.canRedo;
-}
-
-// -- hypothesis mode ---------------------------------------------------------------
-
-function enterHypothesis(): void {
-  if (!current || board.hypoBase) return;
-  board.hypoBase = current.ps.snapshot();
-  $('hypo').hidden = true;
-  $('hypo-controls').hidden = false;
-  setStatus('가정 모드: 이후 표시는 반투명으로 쌓입니다. 확정하거나 버리세요.');
-  board.draw();
-}
-
-function exitHypothesis(keep: boolean): void {
-  if (!current) return;
-  if (board.hypoBase && !keep) {
-    current.ps.beginChange();
-    current.ps.restore(board.hypoBase);
-  }
-  board.hypoBase = null;
-  $('hypo').hidden = false;
-  $('hypo-controls').hidden = true;
-  onChange();
+  $<HTMLButtonElement>('clear').disabled = current.ps.isEmpty();
 }
 
 // -- wiring --------------------------------------------------------------------------
 
 const bankBox = form.querySelector<HTMLInputElement>('#rules input[value="shapeBank"]')!;
-const syncSizeRow = () => {
+const roseBox = form.querySelector<HTMLInputElement>('#rules input[value="rose"]')!;
+const syncRows = () => {
   $('size-row').hidden = bankBox.checked;
+  $('rose-row').hidden = !roseBox.checked;
 };
-bankBox.addEventListener('change', syncSizeRow);
-syncSizeRow();
+bankBox.addEventListener('change', syncRows);
+roseBox.addEventListener('change', syncRows);
+syncRows();
 
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   const o = readOptions();
   if (!o.rules.length) {
-    genStatus.textContent = '룰을 하나 이상 고르세요.';
+    warn(M.warnNoRules);
     return;
   }
-  if (o.rules.length === 1 && o.rules[0] === 'shapeBank' && o.mask !== 'symmetric') {
-    genStatus.textContent = 'Shape Bank만으로는 직사각형 격자에서 퍼즐이 거의 나오지 않습니다. 비정형 격자를 켜거나 다른 룰을 추가하세요.';
+  // Twin, unlike and size separation never forbid cutting a region in two, so
+  // on their own (even with every border pre-drawn) the solution is never unique.
+  if (o.rules.every((r) => r === 'gemini' || r === 'delta' || r === 'sizeSeparation')) {
+    warn(M.warnCannotOutline);
+    return;
+  }
+  // Twin regions have the same shape, hence the same area: size separation forbids exactly that.
+  if (o.rules.includes('gemini') && o.rules.includes('sizeSeparation')) {
+    warn(M.warnGeminiSizeSep);
     return;
   }
   startGenerate(o);
 });
 
+$('goal').addEventListener('click', () => {
+  if (current) goalDialog.showModal();
+});
+$('goal-close').addEventListener('click', () => goalDialog.close());
+goalDialog.addEventListener('click', (e) => {
+  if (e.target === goalDialog) goalDialog.close();
+});
 $('undo').addEventListener('click', () => {
   if (current?.ps.undo()) onChange();
 });
@@ -315,8 +345,6 @@ $('redo').addEventListener('click', () => {
 });
 $('clear').addEventListener('click', () => {
   if (!current) return;
-  board.overlay = null;
-  exitHypothesis(true);
   current.ps.clear();
   onChange();
 });
@@ -324,36 +352,100 @@ $('eraser').addEventListener('click', () => {
   board.eraser = !board.eraser;
   $('eraser').classList.toggle('active', board.eraser);
 });
-$('hypo').addEventListener('click', enterHypothesis);
-$('hypo-keep').addEventListener('click', () => exitHypothesis(true));
-$('hypo-drop').addEventListener('click', () => exitHypothesis(false));
 $('check').addEventListener('click', () => {
   if (!current) return;
-  board.errors = findViolations(current.puzzle, current.ps);
+  const v = findViolations(current.puzzle, current.ps);
+  board.errors = v.cells;
+  board.errorEdges = v.edges;
   board.draw();
-  const n = board.errors.size;
-  setStatus(n ? `규칙을 어긴 칸 ${n}개를 빗금으로 표시했습니다` : '지금까지의 표시는 규칙을 어기지 않습니다');
+  setStatus(M.checkResult(v.cells.size, v.edges.size));
 });
 errorMode.addEventListener('change', () => onChange());
-$('hint').addEventListener('click', () => {
+// Hints come in stages: where to look → what follows and why → apply it.
+const hintBtn = $<HTMLButtonElement>('hint');
+function resetHint(): void {
+  board.hint = null;
+  board.hintStage = 1;
+  hintBtn.textContent = M.hint;
+}
+hintBtn.addEventListener('click', () => {
   if (!current) return;
-  const h = nextHint(current.engine, current.ps);
-  if (h === 'error') {
-    setStatus('현재 표시대로는 풀 수 없습니다. 어딘가 잘못된 표시가 있습니다.');
+  const h = board.hint;
+  if (h?.kind === 'step' && board.hintStage === 1) {
+    board.hintStage = 2;
+    board.draw();
+    setStatus(h.reason);
+    hintBtn.textContent = M.hintApply;
     return;
   }
-  if (!h) {
-    setStatus('더 이상 단순한 추론을 찾지 못했습니다.');
+  if (h?.kind === 'step' && board.hintStage === 2) {
+    const ps = current.ps;
+    ps.beginChange();
+    if (h.value === 'wall') ps.setEdge(h.edge, WALL);
+    else {
+      const g = ps.grid;
+      const a = g.edgeA[h.edge];
+      const b = g.edgeB[h.edge];
+      const from = h.focus === a ? b : a;
+      const id = ps.paint[from] || ps.newRegion(from);
+      if (ps.paint[h.focus] !== id) ps.extend(h.focus, id);
+    }
+    onChange();
     return;
   }
-  board.hint = h;
+  const next = nextHint(current.engine, current.ps, current.solution);
+  if (!next) {
+    resetHint();
+    board.draw();
+    setStatus(checkCompletion(current.engine, current.ps).done ? M.hintDone : M.hintNone);
+    return;
+  }
+  board.hint = next;
+  board.hintStage = 1;
   board.draw();
-  setStatus(`${h.value === 'wall' ? '경계선' : '연결'}: ${h.label}`);
+  if (next.kind === 'mistake') {
+    setStatus(next.edge >= 0 ? M.mistakeWall : next.cells.length ? M.mistakeCells : M.mistakeOther);
+    hintBtn.textContent = M.hint;
+    return;
+  }
+  setStatus(next.where);
+  hintBtn.textContent = M.hintMore;
 });
-$('reveal').addEventListener('click', () => {
+function showSolution(): void {
   if (!current) return;
-  board.overlay = board.overlay ? null : wallsOf(current.ps.grid, current.solution);
+  board.reveal = solutionView(current.puzzle, current.solution);
+  board.setComplete(false);
+  resetHint();
+  board.errors = new Set();
+  board.errorEdges = new Set();
   board.draw();
+  revealBtn.textContent = M.hideSolution;
+  for (const id of ['eraser', 'check', 'hint']) $<HTMLButtonElement>(id).disabled = true;
+  setStatus(M.revealing);
+}
+
+function hideSolution(): void {
+  board.reveal = null;
+  revealBtn.textContent = M.reveal;
+  for (const id of ['eraser', 'check', 'hint']) $<HTMLButtonElement>(id).disabled = false;
+}
+
+revealBtn.addEventListener('click', () => {
+  if (!current) return;
+  if (board.reveal) {
+    hideSolution();
+    onChange();
+    return;
+  }
+  revealDialog.showModal();
+});
+$('reveal-cancel').addEventListener('click', () => revealDialog.close());
+$('reveal-confirm').addEventListener('click', () => {
+  revealDialog.close();
+  showSolution();
+});
+revealDialog.addEventListener('click', (e) => {
+  if (e.target === revealDialog) revealDialog.close();
 });
 
 document.addEventListener('keydown', (e) => {
@@ -389,3 +481,4 @@ if (fromHash && last && last.hash === location.hash) {
   loadPuzzle(last.puzzle, Int32Array.from(last.solution), last.stars, last.difficulty);
   shareEl.href = location.href;
 }
+updateButtons();

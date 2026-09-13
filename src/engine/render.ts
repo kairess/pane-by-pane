@@ -13,6 +13,7 @@ export function render(puzzle: Puzzle, labels?: Labels): string {
   const g = makeGrid(puzzle.width, puzzle.height, puzzle.holes ?? []);
   const cellText: string[] = Array.from({ length: g.cells }, () => ' ');
   const edgeMark = new Map<number, string>();
+  const fixed = new Set((puzzle.walls ?? []).map((w) => edgeBetween(g, w.a, w.b)));
   const globals: string[] = [];
   for (const c of puzzle.clues) {
     switch (c.type) {
@@ -54,6 +55,7 @@ export function render(puzzle: Puzzle, labels?: Labels): string {
     const e = edgeBetween(g, ay * g.w + ax, by * g.w + bx);
     const m = edgeMark.get(e);
     if (m) return m;
+    if (fixed.has(e)) return 'fixed';
     if (labels && labels[ay * g.w + ax] !== labels[by * g.w + bx]) return 'wall';
     return 'open';
   };
@@ -64,7 +66,7 @@ export function render(puzzle: Puzzle, labels?: Labels): string {
     for (let x = 0; x < g.w; x++) {
       const b = border(x, y - 1, x, y);
       const corner = act(x, y) || act(x, y - 1) || act(x - 1, y) || act(x - 1, y - 1) ? '+' : ' ';
-      s += corner + (b === '' ? '   ' : b === 'wall' ? '---' : b === 'open' ? '   ' : ` ${b} `);
+      s += corner + (b === '' ? '   ' : b === 'wall' ? '---' : b === 'fixed' ? '═══' : b === 'open' ? '   ' : ` ${b} `);
     }
     s += act(g.w - 1, y) || act(g.w - 1, y - 1) ? '+' : ' ';
     lines.push(s.trimEnd());
@@ -72,7 +74,7 @@ export function render(puzzle: Puzzle, labels?: Labels): string {
     let r = '';
     for (let x = 0; x <= g.w; x++) {
       const b = border(x - 1, y, x, y);
-      r += b === '' ? ' ' : b === 'wall' ? '|' : b === 'open' ? ' ' : b;
+      r += b === '' ? ' ' : b === 'wall' ? '|' : b === 'fixed' ? '║' : b === 'open' ? ' ' : b;
       if (x < g.w) r += act(x, y) ? ` ${cellText[y * g.w + x]} ` : '   ';
     }
     lines.push(r.trimEnd());

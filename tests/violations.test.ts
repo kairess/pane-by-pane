@@ -17,38 +17,66 @@ test('shape bank: an enclosed region whose shape is not in the bank is a violati
   const puzzle: Puzzle = { width: 4, height: 4, clues: [{ type: 'shapeBank', shapes: [shapeFromName('I3'), shapeFromName('L3')] }] };
   const ps = new PlayerState(puzzle);
   // nothing drawn: the whole board (16 cells) is bigger than the largest bank shape → not flagged
-  assert.equal(findViolations(puzzle, ps).size, 0);
+  assert.equal(findViolations(puzzle, ps).cells.size, 0);
   // enclose a 2x2 square (O4): size 4 > bankMax 3 → not flagged (could still be split)
   enclose(ps, [0, 1, 4, 5]);
-  assert.equal(findViolations(puzzle, ps).size, 0);
+  assert.equal(findViolations(puzzle, ps).cells.size, 0);
   // enclose an I3 → fine
   const ps2 = new PlayerState(puzzle);
   enclose(ps2, [0, 1, 2]);
-  assert.equal(findViolations(puzzle, ps2).size, 0);
+  assert.equal(findViolations(puzzle, ps2).cells.size, 0);
   // enclose a domino → too small, flagged
   const ps3 = new PlayerState(puzzle);
   enclose(ps3, [0, 1]);
-  assert.deepEqual([...findViolations(puzzle, ps3)].sort(), [0, 1]);
+  assert.deepEqual([...findViolations(puzzle, ps3).cells].sort(), [0, 1]);
   // bank with a 4-cell shape: an enclosed O4 when the bank has only T4 → flagged
   const puzzle2: Puzzle = { width: 4, height: 4, clues: [{ type: 'shapeBank', shapes: [shapeFromName('T4')] }] };
   const ps4 = new PlayerState(puzzle2);
   enclose(ps4, [0, 1, 4, 5]);
-  assert.deepEqual([...findViolations(puzzle2, ps4)].sort(), [0, 1, 4, 5]);
+  assert.deepEqual([...findViolations(puzzle2, ps4).cells].sort(), [0, 1, 4, 5]);
 });
 
 test('area number and paint violations', () => {
   const puzzle: Puzzle = { width: 4, height: 2, clues: [{ type: 'areaNumber', cell: 0, value: 3 }, { type: 'areaNumber', cell: 3, value: 2 }] };
   const ps = new PlayerState(puzzle);
   enclose(ps, [0, 1]); // region of 2 containing a 3 → flagged
-  assert.deepEqual([...findViolations(puzzle, ps)].sort(), [0, 1]);
+  assert.deepEqual([...findViolations(puzzle, ps).cells].sort(), [0, 1]);
   const ps2 = new PlayerState(puzzle);
   const id = ps2.newRegion(0);
   ps2.extend(1, id);
   ps2.extend(2, id);
   ps2.extend(3, id); // one paint region holding 3 and 2 → flagged
-  assert.equal(findViolations(puzzle, ps2).size, 4);
+  assert.equal(findViolations(puzzle, ps2).cells.size, 4);
   const ps3 = new PlayerState(puzzle);
   // a wall that is merely different from the solution is not a violation
   ps3.setEdge(edgeBetween(ps3.grid, 1, 2), WALL);
-  assert.equal(findViolations(puzzle, ps3).size, 0);
+  assert.equal(findViolations(puzzle, ps3).cells.size, 0);
+});
+
+test('fixed walls: painting across one flags the wall, drawing on it is ignored', () => {
+  const puzzle: Puzzle = { width: 3, height: 1, walls: [{ a: 0, b: 1 }], clues: [] };
+  const ps = new PlayerState(puzzle);
+  const e = edgeBetween(ps.grid, 0, 1);
+  assert.equal(ps.fixed[e], 1);
+  ps.setEdge(e, WALL);
+  assert.equal(ps.edge[e], 0, 'fixed walls are not player marks');
+  assert.equal(ps.areaOf(0).count, 1, 'fixed wall bounds the area');
+  const id = ps.newRegion(0);
+  ps.extend(1, id);
+  const v = findViolations(puzzle, ps);
+  assert.deepEqual([...v.edges], [e]);
+  assert.equal(v.cells.size, 0);
+});
+
+test('a region that grows into a same-hue neighbour is recoloured', () => {
+  const puzzle: Puzzle = { width: 4, height: 1, clues: [] };
+  for (let trial = 0; trial < 20; trial++) {
+    const ps = new PlayerState(puzzle);
+    const a = ps.newRegion(0);
+    const b = ps.newRegion(3);
+    ps.hue[b] = ps.hue[a]; // force a clash once they touch
+    ps.extend(1, a);
+    ps.extend(2, b);
+    assert.notEqual(ps.hue[a], ps.hue[b]);
+  }
 });

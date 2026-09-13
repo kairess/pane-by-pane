@@ -1,4 +1,4 @@
-import { makeGrid, otherCell, type Grid } from '../engine/grid.ts';
+import { edgeBetween, makeGrid, otherCell, type Grid } from '../engine/grid.ts';
 import type { Puzzle } from '../engine/types.ts';
 
 /**
@@ -23,10 +23,50 @@ export interface Snapshot {
 }
 
 /** Pastel fills for paint regions; neighbouring regions get different ones. */
-export const HUES = ['#bfdbfe', '#bbf7d0', '#fde68a', '#fbcfe8', '#ddd6fe', '#fed7aa', '#99f6e4', '#fecaca', '#bae6fd', '#d9f99d'];
+/** glass colours: jewel tones, light enough for the clue ink to stay readable */
+export const HUES = [
+  '#5d8fe6', // sapphire
+  '#4fbf8c', // emerald
+  '#f0c04a', // amber
+  '#ee7fae', // rose
+  '#9c86e8', // violet
+  '#f28c4e', // orange
+  '#43bfc4', // teal
+  '#e46060', // ruby
+  '#7cc0f2', // sky
+  '#a7cf4f', // lime
+];
+/** hues that look alike side by side (same family); avoided as neighbours when another hue is free */
+const HUE_FAMILY = [0, 1, 2, 3, 4, 2, 1, 3, 0, 1];
+
+/**
+ * Hues not in `used` (hues of regions sharing an edge). Preferred, in order:
+ * a family used by no neighbour, not even a diagonal one (`corner`); a family
+ * used by no edge neighbour; any hue no edge neighbour has.
+ */
+export function huePool(used: Set<number>, corner: Set<number> = new Set()): number[] {
+  const all = HUES.map((_, i) => i);
+  const families = (hs: Iterable<number>) => new Set([...hs].map((h) => HUE_FAMILY[h]));
+  const edgeFam = families(used);
+  const bothFam = families([...used, ...corner]);
+  const farthest = all.filter((i) => !bothFam.has(HUE_FAMILY[i]));
+  if (farthest.length) return farthest;
+  const far = all.filter((i) => !edgeFam.has(HUE_FAMILY[i]));
+  return far.length ? far : all.filter((i) => !used.has(i));
+}
+
+/** A hue from the pool, keeping `prefer` when it qualifies. */
+function freeHue(used: Set<number>, corner: Set<number>, prefer?: number): number | undefined {
+  const pool = huePool(used, corner);
+  if (!pool.length) return undefined;
+  if (prefer !== undefined && pool.includes(prefer)) return prefer;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 
 export class PlayerState {
   readonly grid: Grid;
+  /** borders that belong to the board (1 = fixed wall); never toggled by the player */
+  readonly fixed: Uint8Array;
   paint: Int32Array;
   edge: Uint8Array;
   /** hue index per paint id (sparse) */
@@ -42,6 +82,11 @@ export class PlayerState {
     this.grid = makeGrid(puzzle.width, puzzle.height, puzzle.holes ?? []);
     this.paint = new Int32Array(this.grid.cells);
     this.edge = new Uint8Array(this.grid.edges);
+    this.fixed = new Uint8Array(this.grid.edges);
+    for (const w of puzzle.walls ?? []) {
+      const e = edgeBetween(this.grid, w.a, w.b);
+      if (e >= 0) this.fixed[e] = 1;
+    }
     this.stamp = new Int32Array(this.grid.cells + this.grid.edges);
   }
 
@@ -106,7 +151,7 @@ export class PlayerState {
   /** Start a new paint region at an unpainted cell; returns its id. */
   newRegion(cell: number): number {
     const id = this.nextId++;
-    this.hue[id] = this.pickHue(cell, id);
+    this.hue[id] = this.pickHue([cell], id);
     this.setPaint(cell, id);
     return id;
   }
@@ -133,7 +178,49 @@ export class PlayerState {
       for (const c of this.regionCells(old)) this.setPaint(c, id);
       delete this.hue[old];
     } else this.setPaint(cell, id);
+    this.ensureDistinctHue(id);
     return true;
+  }
+
+  /**
+   * A region that has grown may now touch another region of the same hue,
+   * which reads as one region. Recolour it with a hue none of its neighbours
+   * use (like the original's auto palette).
+   */
+  private ensureDistinctHue(id: number): void {
+    const cells: number[] = [];
+    for (let c = 0; c < this.grid.cells; c++) if (this.paint[c] === id) cells.push(c);
+    const { used, corner } = this.neighbourHues(cells, id);
+    const h = freeHue(used, corner, this.hue[id]);
+    if (h !== undefined) this.hue[id] = h;
+  }
+
+  /** Hues of other regions touching `cells` along an edge (`used`) or only at a corner (`corner`). */
+  private neighbourHues(cells: number[], id: number): { used: Set<number>; corner: Set<number> } {
+    const g = this.grid;
+    const used = new Set<number>();
+    const corner = new Set<number>();
+    const hueAt = (c: number): number | undefined => {
+      const p = this.paint[c];
+      return p && p !== id ? this.hue[p] : undefined;
+    };
+    for (const c of cells) {
+      for (const n of g.adj[c]) {
+        const h = hueAt(n);
+        if (h !== undefined) used.add(h);
+      }
+      const x = c % g.w;
+      const y = (c - x) / g.w;
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= g.w || ny >= g.h) continue;
+        const h = hueAt(ny * g.w + nx);
+        if (h !== undefined) corner.add(h);
+      }
+    }
+    for (const h of used) corner.delete(h);
+    return { used, corner };
   }
 
   erasePaint(cell: number): boolean {
@@ -192,26 +279,19 @@ export class PlayerState {
       }
       const nid = this.nextId++;
       for (const c of comp) this.paint[c] = nid;
-      this.hue[nid] = this.pickHue(comp[0], nid);
+      this.hue[nid] = this.pickHue(comp, nid);
     }
   }
 
-  private pickHue(cell: number, id: number): number {
-    const used = new Set<number>();
-    const g = this.grid;
-    for (const n of g.adj[cell]) {
-      const p = this.paint[n];
-      if (p && p !== id && this.hue[p] !== undefined) used.add(this.hue[p]);
-    }
-    const free = HUES.map((_, i) => i).filter((i) => !used.has(i));
-    const pool = free.length ? free : HUES.map((_, i) => i);
-    return pool[Math.floor(Math.random() * pool.length)];
+  private pickHue(cells: number[], id: number): number {
+    const { used, corner } = this.neighbourHues(cells, id);
+    return freeHue(used, corner) ?? Math.floor(Math.random() * HUES.length);
   }
 
   // -- edges -----------------------------------------------------------------
 
   setEdge(e: number, v: EdgeMark): void {
-    if (this.edge[e] === v) return;
+    if (this.fixed[e] || this.edge[e] === v) return;
     this.edge[e] = v;
     this.stamp[this.grid.cells + e] = v === NONE ? 0 : this.clock++;
     if (v === WALL) {
@@ -228,9 +308,14 @@ export class PlayerState {
 
   // -- derived partitions ------------------------------------------------------
 
-  /** Region label per cell from walls only (-1 for holes). */
+  /** True if `e` separates cells: a drawn wall or a fixed one. */
+  isWall(e: number): boolean {
+    return this.edge[e] === WALL || this.fixed[e] === 1;
+  }
+
+  /** Region label per cell from walls (drawn or fixed) only (-1 for holes). */
   labelsByWalls(): Int32Array {
-    return this.components((e) => this.edge[e] !== WALL);
+    return this.components((e) => !this.isWall(e));
   }
 
   /** Region label per cell from paint (unpainted cells get -2). */

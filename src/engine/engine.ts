@@ -18,6 +18,7 @@ export function createEngine(puzzle: Puzzle): Engine {
 
 function validate(p: Puzzle, g: Grid): void {
   const cellOk = (c: number) => Number.isInteger(c) && c >= 0 && c < g.cells && g.active[c] === 1;
+  for (const w of p.walls ?? []) if (!cellOk(w.a) || !cellOk(w.b)) throw new Error('bad fixed wall');
   for (const c of p.clues) {
     switch (c.type) {
       case 'areaNumber':

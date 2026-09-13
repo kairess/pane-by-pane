@@ -25,6 +25,7 @@ options (gen/batch):
   --mask              irregular symmetric board (holes); --holes 0.15 fixes the fraction
   --symmetry lr|tb|both
   --asym 2            asymmetric tweaks after the symmetric base (default random 0-3)
+  --walls [0.2]       fixed walls (board leading): fraction of the solution's borders (flag alone = random 0.1-0.3)
   --repairs 4         Shape Bank: max regions carved out of the board to force uniqueness (0 = off)
   --count 3           how many puzzles
   --seed 42           reproducible generation
@@ -79,6 +80,7 @@ function genOptions(flags: Record<string, string | true>): GenerateOptions {
     holeRatio: typeof flags.holes === 'string' ? Number(flags.holes) : undefined,
     symmetry: typeof flags.symmetry === 'string' ? (flags.symmetry as 'lr' | 'tb' | 'both') : undefined,
     asymmetry: typeof flags.asym === 'string' ? Number(flags.asym) : undefined,
+    walls: typeof flags.walls === 'string' ? Number(flags.walls) : flags.walls === true,
     repairs: typeof flags.repairs === 'string' ? Number(flags.repairs) : undefined,
   };
 }

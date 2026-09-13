@@ -5,91 +5,141 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="description" content="A stained-glass region-partition puzzle: generator, logical solver and a touch-first player." />
     <title>pane by pane</title>
     <link rel="stylesheet" href="./src/web/style.css" />
   </head>
   <body>
+    <header id="top">
+      <h1>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="4" /><path d="M12 2v6M12 16v6M2 12h6M16 12h6M4.9 4.9l4.3 4.3M14.8 14.8l4.3 4.3M4.9 19.1l4.3-4.3M14.8 9.2l4.3-4.3" /></svg>
+        pane by pane
+      </h1>
+      <div id="stars" class="muted"></div>
+      <nav id="actions" aria-label="tools">
+        <button type="button" id="goal" class="icon" data-i18n-title="goal" data-i18n-aria="goal">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" /></svg>
+          <span data-i18n="goal">목표</span>
+        </button>
+        <button type="button" id="undo" class="icon" data-i18n-title="undoTitle" data-i18n-aria="undo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 4 12l5 5" /><path d="M4 12h10a5 5 0 0 1 0 10h-3" /></svg>
+          <span data-i18n="undo">되돌리기</span>
+        </button>
+        <button type="button" id="redo" class="icon" data-i18n-title="redoTitle" data-i18n-aria="redo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 7 5 5-5 5" /><path d="M20 12H10a5 5 0 0 0 0 10h3" /></svg>
+          <span data-i18n="redo">다시 실행</span>
+        </button>
+        <button type="button" id="clear" class="icon" data-i18n-title="clear" data-i18n-aria="clear">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16" /><path d="M9 7V4h6v3" /><path d="M6 7l1 13h10l1-13" /><path d="M10 11v6M14 11v6" /></svg>
+          <span data-i18n="clear">전부 지우기</span>
+        </button>
+        <button type="button" id="lang" class="icon" data-i18n-title="langSwitchTitle">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>
+          <span data-i18n="langSwitch">EN</span>
+        </button>
+      </nav>
+    </header>
+    <dialog id="goal-dialog">
+      <div class="dialog-head">
+        <strong data-i18n="goal">목표</strong>
+        <button type="button" id="goal-close" class="icon small-icon" data-i18n-aria="close" data-i18n-title="close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+      <div id="goal-stars" class="muted"></div>
+      <p class="muted" data-i18n="goalDesc">규칙을 지켜 창의 모든 칸을 색유리로 채우거나, 모든 구역의 경계선을 그리세요.</p>
+      <div id="rules-info"></div>
+    </dialog>
+    <dialog id="reveal-dialog">
+      <div class="dialog-head"><strong data-i18n="revealTitle">정답 보기</strong></div>
+      <p class="muted" data-i18n="revealText">정답을 보면 이 창은 직접 푼 것으로 남지 않습니다. 정말 보시겠어요?</p>
+      <div class="dialog-actions">
+        <button type="button" id="reveal-cancel" data-i18n="cancel">취소</button>
+        <button type="button" id="reveal-confirm" class="primary" data-i18n="reveal">정답 보기</button>
+      </div>
+    </dialog>
+    <dialog id="warn-dialog">
+      <div class="dialog-head"><strong data-i18n="warnTitle">창을 만들 수 없습니다</strong></div>
+      <p id="warn-text" class="muted"></p>
+      <div class="dialog-actions">
+        <button type="button" id="warn-close" class="primary" data-i18n="ok">확인</button>
+      </div>
+    </dialog>
     <div id="app">
+      <main id="board-wrap">
+        <canvas id="board"></canvas>
+      </main>
       <aside id="panel">
-        <h1>pane by pane</h1>
+        <div id="info" hidden>
+          <div id="status"></div>
+          <div class="toolbar">
+            <button type="button" id="eraser" data-i18n="eraser">지우개 (드래그)</button>
+            <button type="button" id="check" data-i18n="check">규칙 확인</button>
+            <button type="button" id="hint" data-i18n="hint">힌트</button>
+            <button type="button" id="reveal" data-i18n="reveal">정답 보기</button>
+          </div>
+          <label><span data-i18n="errorMode">오류 표시</span>
+            <select id="error-mode">
+              <option value="always" selected data-i18n="errAlways">항상 (규칙을 어긴 칸에 빗금)</option>
+              <option value="check" data-i18n="errCheck">규칙 확인을 눌렀을 때</option>
+              <option value="off" data-i18n="errOff">끄기</option>
+            </select>
+          </label>
+          <details class="small muted">
+            <summary data-i18n="controls">조작법</summary>
+            <ul>
+              <li data-i18n="ctl.0"></li>
+              <li data-i18n="ctl.1"></li>
+              <li data-i18n="ctl.2"></li>
+              <li data-i18n="ctl.3"></li>
+              <li data-i18n="ctl.4"></li>
+              <li data-i18n="ctl.5"></li>
+              <li data-i18n="ctl.6"></li>
+            </ul>
+          </details>
+          <a id="share" href="#" class="small" data-i18n="shareLink">이 창 링크</a>
+        </div>
         <form id="gen-form">
-          <label>크기
+          <div class="section-title" data-i18n="newWindow">새 창 만들기</div>
+          <label><span data-i18n="size">크기</span>
             <span class="row">
               <input type="number" id="w" min="3" max="10" value="6" /> ×
               <input type="number" id="h" min="3" max="10" value="6" />
             </span>
           </label>
           <fieldset id="rules">
-            <legend>룰</legend>
-            <label><input type="checkbox" value="areaNumber" checked /> Area Number</label>
-            <label><input type="checkbox" value="range" /> Range</label>
-            <label><input type="checkbox" value="shapeBank" /> Shape Bank</label>
-            <label><input type="checkbox" value="polyomino" /> Polyomino</label>
-            <label><input type="checkbox" value="gemini" checked /> Gemini</label>
-            <label><input type="checkbox" value="delta" checked /> Delta</label>
-            <label><input type="checkbox" value="rose" /> Rose</label>
-            <label><input type="checkbox" value="sizeSeparation" /> Size Separation</label>
+            <legend data-i18n="rules">규칙</legend>
+            <label><input type="checkbox" value="areaNumber" checked /> <span data-i18n="rule.areaNumber">넓이의 수</span></label>
+            <label><input type="checkbox" value="range" /> <span data-i18n="rule.range">넓이의 범위</span></label>
+            <label><input type="checkbox" value="shapeBank" /> <span data-i18n="rule.shapeBank">도형 창고</span></label>
+            <label><input type="checkbox" value="polyomino" /> <span data-i18n="rule.polyomino">폴리오미노</span></label>
+            <label><input type="checkbox" value="gemini" checked /> <span data-i18n="rule.gemini">쌍둥이</span></label>
+            <label><input type="checkbox" value="delta" checked /> <span data-i18n="rule.delta">닮지 않은 둘</span></label>
+            <label><input type="checkbox" value="rose" /> <span data-i18n="rule.rose">장미창</span></label>
+            <label><input type="checkbox" value="sizeSeparation" /> <span data-i18n="rule.sizeSeparation">넓이 구분</span></label>
           </fieldset>
-          <label id="size-row">region 크기
+          <label id="rose-row" hidden><span data-i18n="roseCount">장미창 기호 수</span>
+            <input type="number" id="rose" min="1" max="4" value="2" />
+          </label>
+          <label id="size-row"><span data-i18n="regionArea">구역 넓이</span>
             <span class="row">
               <input type="number" id="min" min="1" max="12" value="3" /> ~
               <input type="number" id="max" min="1" max="12" value="6" />
             </span>
           </label>
-          <label>별점
+          <label><span data-i18n="difficulty">난이도</span>
             <span class="row">
               <input type="number" id="starLo" min="1" max="7" value="2" /> ~
               <input type="number" id="starHi" min="1" max="7" value="3" />
             </span>
           </label>
-          <label class="check"><input type="checkbox" id="mask" checked /> 비정형 격자</label>
-          <label>seed <input type="text" id="seed" placeholder="비우면 랜덤" /></label>
-          <button type="submit" id="generate">퍼즐 생성</button>
+          <label class="check"><input type="checkbox" id="mask" checked /> <span data-i18n="mask">비정형 창</span></label>
+          <label class="check"><input type="checkbox" id="walls" checked /> <span data-i18n="walls">고정 경계선</span></label>
+          <label><span data-i18n="seed">seed</span> <input type="text" id="seed" data-i18n-placeholder="seedPlaceholder" placeholder="비우면 랜덤" /></label>
+          <button type="submit" id="generate" data-i18n="generate">창 만들기</button>
           <div id="gen-status" class="muted"></div>
         </form>
-        <div id="info" hidden>
-          <div id="stars"></div>
-          <div id="rules-info"></div>
-          <div class="toolbar">
-            <button type="button" id="undo" title="⌘Z">되돌리기</button>
-            <button type="button" id="redo" title="⇧⌘Z">다시 실행</button>
-            <button type="button" id="eraser">지우개 (드래그)</button>
-            <button type="button" id="clear">전부 지우기</button>
-            <button type="button" id="hypo">가정 시작</button>
-            <span id="hypo-controls" class="pair" hidden>
-              <button type="button" id="hypo-keep">확정</button>
-              <button type="button" id="hypo-drop">버리기</button>
-            </span>
-            <button type="button" id="check">오류 확인</button>
-            <button type="button" id="hint">힌트</button>
-            <button type="button" id="reveal">정답 보기</button>
-          </div>
-          <label>오류 표시
-            <select id="error-mode">
-              <option value="always" selected>항상 (룰을 어긴 칸에 빗금)</option>
-              <option value="check">확인 버튼을 눌렀을 때</option>
-              <option value="off">끄기</option>
-            </select>
-          </label>
-          <div id="status"></div>
-          <details class="small muted">
-            <summary>조작법</summary>
-            <ul>
-              <li>빈 칸 탭: 새 region 시작 (색 자동)</li>
-              <li>칸 드래그: 지나간 칸을 같은 region으로 잇기 (벽은 못 넘음). 다른 색 영역에 닿으면 그 영역 전체가 현재 색으로 합쳐짐</li>
-              <li>칠한 칸 탭: 그 칸 지우기 · 칠한 칸에서 드래그: 그 색으로 잇기</li>
-              <li>지우개 버튼: 드래그로 여러 칸 지우기 (벽은 벽을 다시 탭해서 지움)</li>
-              <li>칸 사이 경계 탭: 벽 그리기 / 다시 탭하면 지우기 (손을 뗄 때 적용, 경계에서 드래그하면 칠하기)</li>
-              <li>칸 길게 누르기: 그 영역의 칸 수</li>
-              <li>완성: 벽을 전부 그리거나, 칸을 전부 칠하면 자동 판정</li>
-            </ul>
-          </details>
-          <a id="share" href="#" class="small">이 퍼즐 링크</a>
-        </div>
       </aside>
-      <main id="board-wrap">
-        <canvas id="board"></canvas>
-      </main>
     </div>
     <script type="module" src="./src/web/main.ts"></script>
   </body>

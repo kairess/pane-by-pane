@@ -5,6 +5,7 @@ import { RoseRule } from './rose.ts';
 import type { Rule } from './rule.ts';
 import { PairShapeRule, PolyominoRule, ShapeBankRule } from './shapes.ts';
 import { AreaNumberRule, RangeRule, SizeSeparationRule } from './size.ts';
+import { FixedWallsRule } from './walls.ts';
 
 export type { Deduction, Rule } from './rule.ts';
 
@@ -15,6 +16,7 @@ function ofType<T extends Clue['type']>(clues: Clue[], t: T): Extract<Clue, { ty
 /** Build rule objects for a puzzle. The core propagator is always last. */
 export function buildRules(puzzle: Puzzle, grid: Grid): Rule[] {
   const rules: Rule[] = [];
+  if (puzzle.walls?.length) rules.push(new FixedWallsRule(puzzle.walls, grid));
   const an = ofType(puzzle.clues, 'areaNumber');
   if (an.length) rules.push(new AreaNumberRule(an));
   const rg = ofType(puzzle.clues, 'range');

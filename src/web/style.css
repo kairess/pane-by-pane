@@ -1,10 +1,15 @@
 :root {
-  --fg: #222;
-  --muted: #777;
-  --line: #ddd;
-  --accent: #2563eb;
-  --ok: #16a34a;
-  --bg: #fafafa;
+  --fg: #2a2521;
+  --muted: #7d746a;
+  --line: #e2dacd;
+  --accent: #a4781f;
+  --accent-dark: #7f5c15;
+  --ok: #8a6a12;
+  --bg: #f7f2ea;
+  --paper: #fcfaf5;
+  --stage: #45444c;
+  --top: 56px;
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   font-size: 14px;
   color: var(--fg);
@@ -33,32 +38,228 @@ textarea {
   user-select: text;
 }
 
-#app {
-  display: flex;
-  min-height: 100vh;
-}
+/* -- header ------------------------------------------------------------------ */
 
-#panel {
-  width: 260px;
-  padding: 20px 18px;
-  border-right: 1px solid var(--line);
-  background: #fff;
+#top {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: var(--top);
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 14px;
+  padding: 0 12px 0 16px;
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 0 #fff inset;
 }
 
 h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--serif);
+  font-size: 21px;
+  font-weight: 500;
+  margin: 0;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+h1 svg {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.4;
+}
+
+#stars {
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  color: var(--accent);
+}
+
+#actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+button.icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 56px;
+  padding: 4px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: 10px;
+  line-height: 1;
+  border-radius: 6px;
+}
+
+button.icon span {
+  white-space: nowrap;
+}
+
+button.icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+button.icon:hover {
+  background: #efe8dc;
+}
+
+button.icon:active {
+  background: #e6dccb;
+}
+
+button.icon:disabled {
+  opacity: 0.35;
+}
+
+button.small-icon {
+  min-width: 0;
+  padding: 4px;
+}
+
+button.icon:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* -- dialogs --------------------------------------------------------------- */
+
+dialog {
+  width: min(92vw, 420px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px 18px;
+  color: var(--fg);
+  background: var(--paper);
+  box-shadow: 0 12px 40px rgba(20, 10, 0, 0.3);
+}
+
+dialog::backdrop {
+  background: rgba(15, 10, 5, 0.45);
+}
+
+dialog p {
+  margin: 8px 0 12px;
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--serif);
+  font-size: 18px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* -- layout ------------------------------------------------------------------ */
+
+#app {
+  display: flex;
+  min-height: calc(100vh - var(--top));
+}
+
+#board-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  /* the stone wall the window is set in: holes show this, glass to fill is pale */
+  background: radial-gradient(ellipse at 50% 40%, #55545d 0%, var(--stage) 45%, #33323a 100%);
+  position: sticky;
+  top: var(--top);
+  height: calc(100vh - var(--top));
+  overflow: hidden;
+}
+
+/* the room goes dark when the window is done (gradients cannot cross-fade, so an overlay fades in) */
+#board-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 45%, #3a3540 0%, #221f27 50%, #131218 100%);
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+}
+
+#board-wrap.lit::before {
+  opacity: 1;
+}
+
+canvas#board {
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  max-width: 100%;
+  /* drop-shadow follows the drawn window, holes and all: set into the wall, then glowing */
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45)) drop-shadow(0 14px 28px rgba(0, 0, 0, 0.3));
+  transition: filter 1.2s ease;
+}
+
+canvas#board.lit {
+  filter: drop-shadow(0 0 14px rgba(255, 225, 170, 0.55)) drop-shadow(0 0 60px rgba(255, 205, 140, 0.35)) drop-shadow(0 0 140px rgba(255, 190, 110, 0.25));
+}
+
+#panel {
+  width: 280px;
+  padding: 18px 18px 24px;
+  border-left: 1px solid var(--line);
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* -- panel widgets --------------------------------------------------------------- */
+
+.section-title {
+  font-family: var(--serif);
   font-size: 16px;
-  font-weight: 600;
-  margin: 0 0 4px;
-  letter-spacing: 0.02em;
+  color: var(--fg);
 }
 
 form {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+#info[hidden] + form {
+  border-top: 0;
+  padding-top: 0;
 }
 
 label {
@@ -94,6 +295,17 @@ input[type='number'] {
   width: 64px;
 }
 
+input:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
 fieldset {
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -127,7 +339,7 @@ button {
 }
 
 button:hover {
-  border-color: #bbb;
+  border-color: #c9bda8;
 }
 
 button:disabled {
@@ -139,6 +351,11 @@ button:disabled {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+#generate:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
 }
 
 .toolbar {
@@ -155,18 +372,12 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border-top: 1px solid var(--line);
-  padding-top: 14px;
 }
 
 button.active {
-  background: #111;
-  border-color: #111;
+  background: var(--fg);
+  border-color: var(--fg);
   color: #fff;
-}
-
-.pair {
-  display: contents;
 }
 
 select {
@@ -187,22 +398,23 @@ details li {
   margin: 2px 0;
 }
 
-#stars {
-  font-size: 15px;
-  letter-spacing: 0.1em;
-}
-
 #rules-info {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
 .rule {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
   flex-wrap: wrap;
+  line-height: 1.4;
+}
+
+.rule b {
+  flex-basis: 100%;
+  font-weight: 600;
 }
 
 .rule canvas {
@@ -216,6 +428,8 @@ details li {
 }
 
 #status.ok {
+  font-family: var(--serif);
+  font-size: 16px;
   color: var(--ok);
 }
 
@@ -231,38 +445,39 @@ a {
   color: var(--accent);
 }
 
-#board-wrap {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  position: sticky;
-  top: 0;
-  height: 100vh;
-}
-
-canvas#board {
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
-  max-width: 100%;
-}
-
 @media (max-width: 700px) {
   #app {
-    flex-direction: column-reverse;
+    flex-direction: column;
   }
   #panel {
     width: auto;
-    border-right: 0;
+    border-left: 0;
     border-top: 1px solid var(--line);
   }
   #board-wrap {
     padding: 12px;
-    position: static;
+    position: relative;
+    top: auto;
     height: auto;
     min-height: 60vh;
+  }
+  #stars {
+    display: none;
+  }
+  #top {
+    gap: 8px;
+  }
+  h1 {
+    font-size: 18px;
+    gap: 7px;
+  }
+  h1 svg {
+    width: 22px;
+    height: 22px;
+  }
+  button.icon {
+    min-width: 46px;
+    padding: 4px 2px;
+    font-size: 9px;
   }
 }

@@ -1,5 +1,6 @@
 import { initialState, propagate, verify, type Engine } from '../engine/engine.ts';
-import { nextDeduction, TECHNIQUE_LABELS } from '../engine/logical.ts';
+import { allDeductions } from '../engine/logical.ts';
+import { M } from './i18n.ts';
 import { JOIN, WALL as EWALL, type State } from '../engine/state.ts';
 import { WALL, type PlayerState } from './model.ts';
 import { edgeBetween } from '../engine/grid.ts';
@@ -20,6 +21,7 @@ export function checkCompletion(engine: Engine, ps: PlayerState): Completion {
   const byWalls = ps.labelsByWalls();
   const regions = new Set(byWalls.filter((l) => l >= 0)).size;
   let dangling = false;
+  // only the player's own walls can dangle; fixed walls are part of the board
   for (let e = 0; e < g.edges; e++) if (ps.edge[e] === WALL && byWalls[g.edgeA[e]] === byWalls[g.edgeB[e]]) dangling = true;
   if (!dangling && regions > 1 && verify(engine, byWalls)) return { done: true, by: 'borders' };
 
@@ -28,7 +30,7 @@ export function checkCompletion(engine: Engine, ps: PlayerState): Completion {
   const allPainted = byPaint.every((l) => l !== -2);
   if (allPainted) {
     let wallInside = false;
-    for (let e = 0; e < g.edges; e++) if (ps.edge[e] === WALL && byPaint[g.edgeA[e]] === byPaint[g.edgeB[e]]) wallInside = true;
+    for (let e = 0; e < g.edges; e++) if (ps.isWall(e) && byPaint[g.edgeA[e]] === byPaint[g.edgeB[e]]) wallInside = true;
     if (!wallInside && verify(engine, byPaint)) return { done: true, by: 'paint' };
     return { done: false, reason: 'wrong' };
   }
@@ -76,12 +78,19 @@ export function stateFromPlayer(engine: Engine, ps: PlayerState): State | null {
  *                  → exact checks: number, range, bank shape, polyomino, rose set,
  *                    plus pairwise Size Separation / Gemini / Delta between definite neighbours
  *   markers        → paint across a Gemini/Delta marker
+ *   fixed walls    → paint across a wall that belongs to the board (the wall is flagged)
  *
- * Returns the violating cells.
+ * Returns the violating cells and edges.
  */
-export function findViolations(puzzle: Puzzle, ps: PlayerState): Set<number> {
+export interface Violations {
+  cells: Set<number>;
+  edges: Set<number>;
+}
+
+export function findViolations(puzzle: Puzzle, ps: PlayerState): Violations {
   const g = ps.grid;
   const bad = new Set<number>();
+  const badEdges = new Set<number>();
   const numbers = new Map<number, number>();
   const polys = new Map<number, string>();
   let rangeMin = 1;
@@ -149,7 +158,7 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Set<number> {
     for (const c of cells) bad.add(c);
   };
 
-  // wall regions: can only shrink
+  // wall regions: can only shrink (fixed walls count as walls)
   const byWalls = ps.labelsByWalls();
   const wallRegions = groups(byWalls);
   for (const cells of wallRegions) {
@@ -169,7 +178,7 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Set<number> {
 
   // claimed regions (paint): can only grow
   const claimed = ps.components((e) => {
-    if (ps.edge[e] === WALL) return false;
+    if (ps.isWall(e)) return false;
     const a = g.edgeA[e];
     return ps.paint[a] !== 0 && ps.paint[a] === ps.paint[g.edgeB[e]];
   });
@@ -224,7 +233,7 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Set<number> {
   // pairwise between definite neighbours
   if (sizeSep || markers.length) {
     for (let e = 0; e < g.edges; e++) {
-      if (ps.edge[e] !== WALL) continue;
+      if (!ps.isWall(e)) continue;
       const la = byWalls[g.edgeA[e]];
       const lb = byWalls[g.edgeB[e]];
       if (la === lb) continue;
@@ -251,37 +260,155 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Set<number> {
       bad.add(b);
     }
   }
-  return bad;
-}
-
-export interface Hint {
-  edge: number;
-  /** what the edge must be */
-  value: 'wall' | 'join';
-  technique: string;
-  label: string;
-  tier: number;
+  // paint across a fixed wall: the wall itself is flagged
+  for (let e = 0; e < g.edges; e++) {
+    if (!ps.fixed[e]) continue;
+    const a = g.edgeA[e];
+    if (ps.paint[a] !== 0 && ps.paint[a] === ps.paint[g.edgeB[e]]) badEdges.add(e);
+  }
+  return { cells: bad, edges: badEdges };
 }
 
 /**
- * Next logical step from the player's current marks: the cheapest deduction
- * the engine can make, or null if the marks are contradictory / nothing found.
+ * A hint, designed from the player's side: first *where* to look, then *what*
+ * follows and *why*, and finally the option to apply it.
  */
-export function nextHint(engine: Engine, ps: PlayerState): Hint | null | 'error' {
-  if (!stateFromPlayer(engine, ps)) return 'error';
+export interface Hint {
+  kind: 'step';
+  edge: number;
+  /** what the edge must be */
+  value: 'wall' | 'join';
+  /** cells of the region the reasoning is about (tinted at stage 1) */
+  region: number[];
+  /** cells on the other side of the edge */
+  other: number[];
+  /** for a join: the cell that must be added to `region` */
+  focus: number;
+  /** stage 1 text: where to look */
+  where: string;
+  /** stage 2 text: what follows and why */
+  reason: string;
+  technique: string;
+  tier: number;
+}
+
+/** The player's marks contradict each other: this mark is wrong. */
+export interface Mistake {
+  kind: 'mistake';
+  /** a wrongly drawn wall, or -1 */
+  edge: number;
+  /** cells wrongly painted as one region (empty for a wall) */
+  cells: number[];
+}
+
+const ROSE_GLYPHS = ['○', '△', '□', '☆', '◇', '♡'];
+
+/** Short name for a component as the player sees it: by its clue if it has one. */
+function describe(puzzle: Puzzle, cells: number[], grid: PlayerState['grid']): string {
+  const set = new Set(cells);
+  for (const c of puzzle.clues) {
+    if (c.type === 'areaNumber' && set.has(c.cell)) return M.h.withNumber(c.value);
+    if (c.type === 'polyomino' && set.has(c.cell)) return M.h.withPolyomino;
+    if (c.type === 'rose') for (const s of c.symbols) if (set.has(s.cell)) return M.h.withSymbol(ROSE_GLYPHS[s.symbol] ?? '');
+  }
+  if (cells.length === 1) {
+    const x = cells[0] % grid.w;
+    const y = (cells[0] - x) / grid.w;
+    return M.h.cellAt(y + 1, x + 1);
+  }
+  return M.h.ofSize(cells.length);
+}
+
+function explain(technique: string, value: 'wall' | 'join', A: string, B: string, n: number, target: string): string {
+  const h = M.h;
+  switch (technique) {
+    case 'fixed-wall':
+      return h.fixedWall;
+    case 'marker-wall':
+      return h.markerWall;
+    case 'same-symbol':
+      return h.sameSymbol;
+    case 'size-full':
+      return h.sizeFull(A, n);
+    case 'merge-conflict':
+      return h.mergeConflict(A, B);
+    case 'forced-exit':
+      return h.forcedExit(A);
+    case 'reach-exact':
+      return h.reachExact(A, target);
+    case 'shape-place':
+      return value === 'wall' ? h.shapePlaceWall(A) : h.shapePlaceJoin(A);
+    case 'bifurcation':
+      return value === 'wall' ? h.bifurcationWall : h.bifurcationJoin;
+    default:
+      return `${h.technique[technique] ?? technique} ${value === 'wall' ? h.isBorder : h.isSame}`;
+  }
+}
+
+/**
+ * Next hint from the player's current marks.
+ *
+ *   - If any mark disagrees with the solution, point at the earliest such
+ *     mark. Deducing from a wrong premise would only lead the player further
+ *     astray. (The player asked for this; the passive error display never
+ *     consults the solution.)
+ *   - Otherwise the cheapest deduction relative to what the player has marked;
+ *     among equally cheap ones, the one nearest to the player's latest mark.
+ *   - null when nothing is left to deduce (the puzzle is complete).
+ */
+export function nextHint(engine: Engine, ps: PlayerState, solution: ArrayLike<number>): Hint | Mistake | null {
+  const g = ps.grid;
+  const facts = playerFacts(ps);
+  for (const f of facts) {
+    const a = g.edgeA[f.edge];
+    const b = g.edgeB[f.edge];
+    const sameInSolution = solution[a] === solution[b];
+    if (f.value === EWALL && sameInSolution) return { kind: 'mistake', edge: f.edge, cells: [] };
+    if (f.value === JOIN && !sameInSolution) return { kind: 'mistake', edge: -1, cells: [a, b] };
+  }
+  if (!stateFromPlayer(engine, ps)) return { kind: 'mistake', edge: -1, cells: [] };
   // Deduce relative to what the player has marked, not to everything the
   // engine could already infer — otherwise every hint would be a what-if.
   const state = initialState(engine, { propagate: false });
-  if (!state) return 'error';
-  for (const f of playerFacts(ps)) if (!state.setEdge(f.edge, f.value)) return 'error';
+  if (!state) return null;
+  for (const f of facts) if (!state.setEdge(f.edge, f.value)) return null;
   if (state.isComplete()) return null;
-  const d = nextDeduction(engine, state);
-  if (!d) return null;
+  const ds = allDeductions(engine, state);
+  if (!ds || !ds.length) return null;
+  // nearest to the latest mark
+  let lastCell = -1;
+  let lastStamp = 0;
+  for (let c = 0; c < g.cells; c++) if (ps.stamp[c] > lastStamp) { lastStamp = ps.stamp[c]; lastCell = c; }
+  for (let e = 0; e < g.edges; e++) if (ps.stamp[g.cells + e] > lastStamp) { lastStamp = ps.stamp[g.cells + e]; lastCell = g.edgeA[e]; }
+  const dist = (c: number) => (lastCell < 0 ? 0 : Math.abs((c % g.w) - (lastCell % g.w)) + Math.abs(Math.floor(c / g.w) - Math.floor(lastCell / g.w)));
+  const best = ds.reduce((p, d) => (d.tier < p.tier || (d.tier === p.tier && dist(g.edgeA[d.edge]) < dist(g.edgeA[p.edge])) ? d : p));
+  const a = g.edgeA[best.edge];
+  const b = g.edgeB[best.edge];
+  const ca = state.comp(a);
+  const cb = state.comp(b);
+  // the "subject" is the side with more information (a clue, or more cells)
+  const clueCells = new Set<number>();
+  for (const c of engine.puzzle.clues) {
+    if (c.type === 'areaNumber' || c.type === 'polyomino') clueCells.add(c.cell);
+    if (c.type === 'rose') for (const s of c.symbols) clueCells.add(s.cell);
+  }
+  const info = (cells: number[]) => cells.filter((c) => clueCells.has(c)).length * 100 + cells.length;
+  const subjectIsA = info(ca.cells) >= info(cb.cells);
+  const subj = subjectIsA ? ca : cb;
+  const oth = subjectIsA ? cb : ca;
+  const A = describe(engine.puzzle, subj.cells, g);
+  const B = describe(engine.puzzle, oth.cells, g);
+  const value = best.value === EWALL ? 'wall' : 'join';
   return {
-    edge: d.edge,
-    value: d.value === EWALL ? 'wall' : 'join',
-    technique: d.technique,
-    label: TECHNIQUE_LABELS[d.technique] ?? d.technique,
-    tier: d.tier,
+    kind: 'step',
+    edge: best.edge,
+    value,
+    region: subj.cells.slice(),
+    other: oth.cells.slice(),
+    focus: value === 'join' ? (subjectIsA ? b : a) : -1,
+    where: M.h.where(A),
+    reason: explain(best.technique, value, A, B, subj.cells.length, subj.lo === subj.hi ? M.h.exactly(subj.lo) : subj.lo > 1 ? M.h.atLeast(subj.lo) : M.h.needed),
+    technique: best.technique,
+    tier: best.tier,
   };
 }
