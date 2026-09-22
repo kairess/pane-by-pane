@@ -17,7 +17,8 @@ options (gen/batch):
   --size 6            square grid (or --w 6 --h 5)
   --rules a,b,c       ${RULE_KINDS.join(',')}
   --min 3 --max 6     region area bounds for the generated solution
-                      (with shapeBank: filters catalogue shapes by cell count; default = whole catalogue)
+                      (default: from the board size and target stars, larger regions for harder targets;
+                      with shapeBank: filters catalogue shapes by cell count; default = whole catalogue)
   --bank 2            shape bank size (default: original game's 1-3 distribution)
   --decoys 1          extra unused shapes in the bank
   --rose 2            rose symbol kinds (1 = Solitude)
@@ -66,8 +67,8 @@ function genOptions(flags: Record<string, string | true>): GenerateOptions {
     width: num('w', size),
     height: num('h', size),
     rules,
-    minSize: num('min', 3),
-    maxSize: num('max', 6),
+    minSize: typeof flags.min === 'string' ? Number(flags.min) : undefined,
+    maxSize: typeof flags.max === 'string' ? Number(flags.max) : undefined,
     bankSize: typeof flags.bank === 'string' ? Number(flags.bank) : undefined,
     bankShapeSizes: typeof flags.min === 'string' || typeof flags.max === 'string' ? [num('min', 1), num('max', 99)] : undefined,
     bankDecoys: num('decoys', 0),
@@ -139,7 +140,7 @@ function main(argv: string[]): void {
       results.push(r);
       hist.set(r.analysis.stars, (hist.get(r.analysis.stars) ?? 0) + 1);
       if (cmd === 'gen') {
-        console.log(`#${i + 1}  seed ${r.seed}  (attempt ${r.attempts}, ${Date.now() - t} ms)`);
+        console.log(`#${i + 1}  seed ${r.seed}  (attempt ${r.attempts}, ${Date.now() - t} ms)${r.missed ? '  [requested star range NOT reached; closest miss]' : ''}`);
         console.log(render(r.puzzle));
         console.log(describe(r.puzzle, r.analysis));
         console.log('solution:');

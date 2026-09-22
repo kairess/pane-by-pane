@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="pane by pane" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#f7f2ea" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
     <meta name="description" content="A stained-glass region-partition puzzle: generator, logical solver and a touch-first player." />
     <title>pane by pane</title>
     <link rel="stylesheet" href="./src/web/style.css" />
@@ -54,6 +60,7 @@
         <dt data-i18n="ctl.4.0"></dt><dd data-i18n="ctl.4.1"></dd>
         <dt data-i18n="ctl.5.0"></dt><dd data-i18n="ctl.5.1"></dd>
         <dt data-i18n="ctl.6.0"></dt><dd data-i18n="ctl.6.1"></dd>
+        <dt data-i18n="ctl.7.0"></dt><dd data-i18n="ctl.7.1"></dd>
       </dl>
     </dialog>
     <dialog id="reveal-dialog">
@@ -65,7 +72,7 @@
       </div>
     </dialog>
     <dialog id="warn-dialog">
-      <div class="dialog-head"><strong data-i18n="warnTitle">창을 만들 수 없습니다</strong></div>
+      <div class="dialog-head"><strong id="warn-title" data-i18n="warnTitle">창을 만들 수 없습니다</strong></div>
       <p id="warn-text" class="muted"></p>
       <div class="dialog-actions">
         <button type="button" id="warn-close" class="primary" data-i18n="ok">확인</button>
@@ -129,12 +136,6 @@
           </fieldset>
           <label id="rose-row" hidden><span data-i18n="roseCount">장미창 기호 수</span>
             <input type="number" id="rose" min="1" max="4" value="2" />
-          </label>
-          <label id="size-row"><span data-i18n="regionArea">구역 넓이</span>
-            <span class="row">
-              <input type="number" id="min" min="1" max="12" value="3" /> ~
-              <input type="number" id="max" min="1" max="12" value="6" />
-            </span>
           </label>
           <label><span data-i18n="difficulty">난이도</span>
             <span class="row">

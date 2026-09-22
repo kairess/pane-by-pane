@@ -45,21 +45,50 @@ export function deriveClueUnits(g: Grid, labels: Labels, rng: Rng, opt: ClueOpti
   const pairs = adjacentRegions(g, labels);
   const units: ClueUnit[] = [];
   const has = (k: RuleKind) => opt.rules.includes(k);
-  const someCells = (r: number, n: number) => rng.shuffle(regions[r].slice()).slice(0, n);
+  // A cell carries at most one symbol. Rose symbols are placed first (their
+  // cells are constrained and the unit is never minimised away), then one
+  // polyomino per region, then the numbers take what is left.
+  const taken = new Set<number>();
+  const someCells = (r: number, n: number) => {
+    const cells = rng.shuffle(regions[r].filter((c) => !taken.has(c))).slice(0, n);
+    for (const c of cells) taken.add(c);
+    return cells;
+  };
 
-  // Cell clues: offer several per region; the minimiser keeps only what is needed.
-  if (has('areaNumber')) {
-    for (const r of regions.keys()) {
-      for (const cell of someCells(r, opt.numbersPerRegion ?? sizes[r])) {
-        units.push({ kind: 'areaNumber', clues: [{ type: 'areaNumber', cell, value: sizes[r] }] });
+  if (has('rose')) {
+    const k = opt.roseSymbols ?? 2;
+    if (regions.every((r) => r.length >= k)) {
+      const symbols: { cell: number; symbol: number }[] = [];
+      let ok = true;
+      for (const r of regions) {
+        const cells = roseSymbolCells(g, r, k, rng, opt.roseForced ?? false);
+        if (!cells) {
+          ok = false;
+          break;
+        }
+        rng.shuffle(cells).forEach((cell, symbol) => symbols.push({ cell, symbol }));
+      }
+      // Rose is what the puzzle is about when asked for: keep it through minimisation.
+      if (ok) {
+        units.push({ kind: 'rose', clues: [{ type: 'rose', symbolCount: k, symbols }], required: true });
+        for (const sym of symbols) taken.add(sym.cell);
       }
     }
   }
 
+  // Cell clues: offer several per region; the minimiser keeps only what is needed.
   if (has('polyomino')) {
     for (const r of regions.keys()) {
       for (const cell of someCells(r, opt.polyominoesPerRegion ?? 1)) {
         units.push({ kind: 'polyomino', clues: [{ type: 'polyomino', cell, shape: keys[r] }] });
+      }
+    }
+  }
+
+  if (has('areaNumber')) {
+    for (const r of regions.keys()) {
+      for (const cell of someCells(r, opt.numbersPerRegion ?? sizes[r])) {
+        units.push({ kind: 'areaNumber', clues: [{ type: 'areaNumber', cell, value: sizes[r] }] });
       }
     }
   }
@@ -90,24 +119,6 @@ export function deriveClueUnits(g: Grid, labels: Labels, rng: Rng, opt: ClueOpti
       for (const e of rng.shuffle(edges.slice()).slice(0, opt.markersPerPair ?? 2)) {
         units.push({ kind, clues: [{ type: kind, edge: { a: g.edgeA[e], b: g.edgeB[e] } }] });
       }
-    }
-  }
-
-  if (has('rose')) {
-    const k = opt.roseSymbols ?? 2;
-    if (regions.every((r) => r.length >= k)) {
-      const symbols: { cell: number; symbol: number }[] = [];
-      let ok = true;
-      for (const r of regions) {
-        const cells = roseSymbolCells(g, r, k, rng, opt.roseForced ?? false);
-        if (!cells) {
-          ok = false;
-          break;
-        }
-        rng.shuffle(cells).forEach((cell, symbol) => symbols.push({ cell, symbol }));
-      }
-      // Rose is what the puzzle is about when asked for: keep it through minimisation.
-      if (ok) units.push({ kind: 'rose', clues: [{ type: 'rose', symbolCount: k, symbols }], required: true });
     }
   }
 

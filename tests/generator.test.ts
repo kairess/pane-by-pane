@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generate, pickWalls, sameLabels } from '../src/engine/generator/generate.ts';
+import { autoSizeBand, generate, pickWalls, sameLabels } from '../src/engine/generator/generate.ts';
 import { growPartition, tilePartition, randomBank, catalogBank, regionsOf } from '../src/engine/generator/partition.ts';
 import { BANK_CATALOG } from '../src/engine/generator/bankCatalog.ts';
 import { shapeSize } from '../src/engine/shape.ts';
@@ -187,4 +187,40 @@ test('every requested rule appears in the puzzle at least once', () => {
       assert.ok((r.puzzle.walls?.length ?? 0) >= 1, 'walls were asked for');
     }
   }
+});
+
+test('cell clues never share a cell: rose symbols, numbers and polyominoes each get their own', () => {
+  const combos: RuleKind[][] = [
+    ['areaNumber', 'rose'],
+    ['polyomino', 'rose'],
+    ['areaNumber', 'polyomino'],
+    ['areaNumber', 'polyomino', 'rose'],
+  ];
+  for (const rules of combos) {
+    for (const seed of [1, 2, 3]) {
+      const r = generate({ width: 6, height: 6, rules, minSize: 3, maxSize: 6, seed, attempts: 60, roseSymbols: 2 });
+      assert.ok(r, `no puzzle generated for ${rules.join('+')} seed ${seed}`);
+      const seen = new Set<number>();
+      for (const clue of r.puzzle.clues) {
+        const cells = clue.type === 'rose' ? clue.symbols.map((s) => s.cell) : 'cell' in clue ? [clue.cell] : [];
+        for (const cell of cells) {
+          assert.ok(!seen.has(cell), `${rules.join('+')} seed ${seed}: cell ${cell} carries two symbols`);
+          seen.add(cell);
+        }
+      }
+    }
+  }
+});
+
+test('region size band is chosen from board size and target stars when not given', () => {
+  const r = generate({ width: 6, height: 6, rules: ['areaNumber', 'gemini', 'delta'], stars: [1, 7], seed: 5, attempts: 30 });
+  assert.ok(r, 'no puzzle generated without explicit region sizes');
+  for (const region of regionsOf(r.solution)) assert.ok(region.length >= 2 && region.length <= 8);
+  // harder targets ask for larger regions, easier ones for smaller
+  const [loHard, hiHard] = autoSizeBand(6, 6, 6, 7);
+  const [loMid, hiMid] = autoSizeBand(6, 6, 3, 4);
+  const [loEasy, hiEasy] = autoSizeBand(6, 6, 1, 2);
+  assert.ok(loHard >= loMid && hiHard > hiMid);
+  assert.ok(loEasy <= loMid && hiEasy < hiMid);
+  assert.ok(autoSizeBand(10, 10, 1, 7)[1] > autoSizeBand(5, 5, 1, 7)[1]);
 });

@@ -30,7 +30,12 @@ export interface GenerateOptions {
   height: number;
   rules: RuleKind[];
   seed?: number;
-  /** region area bounds for the random partition (default 3..6). Ignored with Shape Bank: regions are the bank's shapes. */
+  /**
+   * Region area bounds for the random partition. Default: chosen from the
+   * board size and the target stars (larger regions make harder puzzles) and
+   * varied a little per solution — see `autoSizeBand`. Ignored with Shape
+   * Bank: regions are the bank's shapes.
+   */
   minSize?: number;
   maxSize?: number;
   /** Shape Bank: number of shapes in the bank (default: original game's 1–3 distribution) */
@@ -75,8 +80,14 @@ export interface GenerateOptions {
    * puzzle may need deeper guessing.
    */
   requireLogical?: boolean;
-  /** solutions to try (default 200) */
+  /**
+   * Attempts: each is one minimisation run (the attempt budget also bounds
+   * the total work). A solution is reused for up to `ordersPerSolution`
+   * consecutive attempts, each removing clues in a different order, before a
+   * new solution is drawn. Default 200 attempts, 8 orders per solution.
+   */
   attempts?: number;
+  ordersPerSolution?: number;
   /** keep redundant clues with this probability (0 = fully minimal, default 0) */
   keepRedundant?: number;
   /** reject puzzles with more clues than this (default: half the cell count) */
@@ -92,6 +103,8 @@ export interface AttemptInfo {
   clues?: number;
   /** regions removed from the board to make the tiling unique */
   repairs?: number;
+  /** which removal order on the current solution this attempt was (1 = fresh solution) */
+  order?: number;
   ms: number;
 }
 
@@ -101,6 +114,12 @@ export interface GeneratedPuzzle {
   analysis: LogicalResult;
   seed: number;
   attempts: number;
+  /**
+   * The requested star range was not reached within the attempt budget and
+   * this is the closest the generator got. Callers should say so rather than
+   * present the puzzle as what was asked for.
+   */
+  missed?: boolean;
 }
 
 /** Search budget for uniqueness checks inside the generator. A puzzle whose
@@ -111,8 +130,6 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
   const seed = opt.seed ?? Math.floor(Math.random() * 0xffffffff);
   const rng = new Rng(seed);
   const rect = makeGrid(opt.width, opt.height);
-  const minSize = opt.minSize ?? 3;
-  const maxSize = opt.maxSize ?? 6;
   const attempts = opt.attempts ?? 200;
   const requireLogical = opt.requireLogical ?? true;
   const [starLo, starHi] = opt.stars ?? [1, 7];
@@ -125,14 +142,50 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
   // themselves, which needs small, path-like regions (see roseSymbolCells).
   const outlining = opt.rules.some((r) => r === 'areaNumber' || r === 'shapeBank' || r === 'polyomino');
   const roseOnly = roseK >= 2 && !outlining;
-  // Range, twin/unlike markers, size separation and one-symbol rose cannot
-  // outline regions by themselves. Like the original's lead lines, the board's
-  // fixed walls then serve as the clue: start from every border of the
-  // solution and take walls away while the rule still pins it.
-  const wallMode = !outlining && !roseOnly;
-  const sizeLo = Math.max(minSize, roseK);
-  // (size separation needs one more size to alternate between neighbours)
-  const sizeHi = roseOnly ? Math.max(sizeLo, Math.min(maxSize, roseK + (sizeSep ? 3 : 2))) : Math.max(maxSize, roseK);
+  // Range, twin/unlike markers, size separation and rose cannot outline
+  // regions by themselves. Like the original's lead lines, the board's fixed
+  // walls then serve as the clue: start from every border of the solution and
+  // take walls away while the rule still pins it. (Rose-only puzzles usually
+  // end up with few or no walls, but on a plain rectangle two dominoes in a
+  // 2x2 block with diagonal symbols can be paired either way, and only a wall
+  // settles that.)
+  const wallMode = !outlining;
+  const [autoLo, autoHi] = autoSizeBand(opt.width, opt.height, starLo, starHi);
+  const explicitSize = opt.minSize !== undefined || opt.maxSize !== undefined;
+  // Markers only (twin / unlike / size separation, with no area rule): nothing
+  // bounds a region from below, so a region can always be cut in two unless a
+  // marker forbids it. As in the original's marker windows, the regions are
+  // therefore small (single cells included) so that every cut breaks a marker:
+  // measured on masked boards, "all walls + all markers" pins the solution for
+  // about half of the partitions with regions of 1-3 cells, a tenth with 1-4,
+  // and never with 1-5.
+  const markerOnly = wallMode && !opt.rules.includes('range') && roseK === 0;
+  /** region size bounds for the next solution */
+  const sizeBand = (): [number, number] => {
+    let lo = opt.minSize ?? autoLo;
+    let hi = opt.maxSize ?? autoHi;
+    if (markerOnly && !explicitSize) return [1, (sizeSep ? 4 : 3) + rng.int(2)];
+    // automatic band: vary it a little per solution so windows differ in grain,
+    // and keep room for at least four regions on a small board
+    if (!explicitSize) {
+      lo += rng.int(2);
+      hi += rng.int(3) - 1;
+      lo = Math.min(lo, Math.max(2, Math.floor(g.activeCount / 4)));
+      if (hi < lo + 2) hi = lo + 2;
+    }
+    if (roseOnly) {
+      // Rose-only regions are small by construction: at most k+2 cells (k+3
+      // with size separation), and from k cells up unless the caller says
+      // otherwise: a region with more tips than symbols cannot be pinned by
+      // its symbols (see roseSymbolCells), and the smallest regions have the
+      // fewest tips. The lower bound stays below the upper one so that at
+      // least two sizes remain, or one region size would have to divide the board.
+      const sizeHi = Math.max(roseK, Math.min(hi, roseK + (sizeSep ? 3 : 2)));
+      const sizeLo = Math.max(roseK, Math.min(explicitSize ? lo : roseK, sizeHi - 1));
+      return [sizeLo, sizeHi];
+    }
+    return [Math.max(lo, roseK), Math.max(hi, roseK)];
+  };
   let g = rect;
   let walls: EdgeRef[] = [];
   const maxClues = () => opt.maxClues ?? Math.ceil(g.activeCount / 2);
@@ -143,118 +196,200 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
     return p;
   };
 
+  /**
+   * Star cap for the current solution. Normally the requested upper bound;
+   * when even the full clue set rates above it (a rule set that never gets
+   * that easy) the cap is lifted to the full set's rating, so the minimiser
+   * keeps the puzzle as easy as it can be and the result is reported as a miss.
+   */
+  let cap = starHi;
   /** The oracle: is this clue set an acceptable puzzle? Returns its analysis. */
   const accept = (clues: Clue[]): LogicalResult | null => {
     const puzzle = mkPuzzle(clues);
     if (!requireLogical && !isUniqueFast(puzzle)) return null;
     const a = solveLogically(puzzle);
     if (requireLogical && !a.solved) return null;
-    return a.stars <= starHi ? a : null;
+    return a.stars <= cap ? a : null;
+  };
+
+  /**
+   * Wall minimisation (wall mode): take walls away, in chunks then singly,
+   * while the puzzle with `clues` stays acceptable. Returns the analysis of
+   * what is left. What is minimised first is what gets removed, and what
+   * stays carries the puzzle: walls carry it plainly (easier), markers and
+   * symbols make the solver work for it (harder). So a hard target takes the
+   * walls away first, once per solution, since with every clue present the
+   * outcome barely depends on the order; otherwise the clues go first and the
+   * walls are trimmed per order, which also keeps the marker count down
+   * (walls are board, not clues, and the original's marker windows keep many
+   * leads and few markers).
+   */
+  const minimiseWalls = (clues: Clue[], start: LogicalResult): LogicalResult => {
+    let analysis = start;
+    let wallsKept = rng.shuffle(walls.slice());
+    const without = (drop: EdgeRef[]): boolean => {
+      const before = walls;
+      walls = wallsKept.filter((w) => !drop.includes(w));
+      const a = accept(clues);
+      if (a) {
+        wallsKept = walls;
+        analysis = a;
+        return true;
+      }
+      walls = before;
+      return false;
+    };
+    const CHUNK = 4;
+    const settled = new Set<EdgeRef>();
+    for (let i = 0; i + CHUNK <= wallsKept.length; i += CHUNK) {
+      const chunk = wallsKept.slice(i, i + CHUNK);
+      if (without(chunk)) for (const w of chunk) settled.add(w);
+    }
+    for (const w of wallsKept.slice()) if (!settled.has(w)) without([w]);
+    walls = wallsKept;
+    return analysis;
   };
 
   let best: GeneratedPuzzle | null = null;
+  // Difficulty comes far more from *which* clues survive minimisation than
+  // from the solution itself: one solution minimised in different orders
+  // spans 2-7 stars. Preparing a solution (partition, clue derivation,
+  // uniqueness) is the expensive part, so each one is minimised in several
+  // orders before a new one is drawn.
+  interface Prepared {
+    g: Grid;
+    solution: Labels;
+    /** fixed walls (in wall mode: every border, minimised per order) */
+    walls: EdgeRef[];
+    units: ClueUnit[];
+    fullAnalysis: LogicalResult;
+    repairs: number;
+  }
+  let prepared: Prepared | null = null;
+  let order = 0;
+  const ordersPerSolution = Math.max(1, opt.ordersPerSolution ?? 8);
+  /** clue sets already produced from the current solution: a repeat means the order no longer matters */
+  const seen = new Set<string>();
+  // Asked for a hard puzzle: minimise clue by clue for more varied outcomes
+  // (the cap at starHi still holds).
+  const prefer = starLo >= 3 ? 'hard' : undefined;
+  const wallsFirst = wallMode && !markerOnly && prefer === 'hard';
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const t0 = Date.now();
     let repairs = 0;
     const report = (reason: AttemptInfo['reason'], stars?: number, clues?: number) =>
-      opt.onAttempt?.({ attempt, reason, stars, clues, repairs, ms: Date.now() - t0 });
+      opt.onAttempt?.({ attempt, reason, stars, clues, repairs, order: order || undefined, ms: Date.now() - t0 });
 
-    // ① board + solution
-    g = opt.mask === 'symmetric' ? makeGrid(rect.w, rect.h, randomMask(rect.w, rect.h, rng, { ratio: opt.holeRatio, symmetry: opt.symmetry, asymmetry: opt.asymmetry })) : rect;
-    let solution: Labels | null;
-    let decoys: ShapeKey[] = [];
-    if (useBank) {
-      const sizes = { minSize: Math.max(opt.bankShapeSizes?.[0] ?? 1, roseK), maxSize: opt.bankShapeSizes?.[1] };
-      const bank = catalogBank(rng, { count: opt.bankSize, ...sizes });
-      solution = tilePartition(g, bank, rng, { sizeSeparation: sizeSep });
-      if (opt.bankDecoys) decoys = catalogBank(rng, { count: opt.bankDecoys, ...sizes, exclude: bank });
-    } else {
-      solution = growPartition(g, rng, { minSize: sizeLo, maxSize: sizeHi, sizeSeparation: sizeSep });
-    }
-    if (!solution) {
-      report('no-partition');
-      continue;
-    }
-    const wallRatio = opt.walls === true ? 0.1 + rng.next() * 0.2 : typeof opt.walls === 'number' ? opt.walls : 0;
-    walls = wallMode ? allBorders(g, solution) : wallRatio > 0 ? pickWalls(g, solution, rng, wallRatio) : [];
-
-    // ② all true clues
-    const derive = () =>
-      deriveClueUnits(g, solution!, rng, {
-        rules: opt.rules,
-        roseSymbols: opt.roseSymbols,
-        roseForced: roseOnly,
-        bankDecoys: decoys,
-        numbersPerRegion: opt.numbersPerRegion,
-        polyominoesPerRegion: opt.polyominoesPerRegion,
-        markersPerPair: opt.markersPerPair,
-      });
-    let units = derive();
-    // Every rule the puzzle was asked for must be derivable from this solution
-    // (twin markers need two same-shaped neighbours, rose needs big enough regions, …).
-    if (opt.rules.some((k) => !units.some((u) => u.kind === k))) {
-      report('no-clues');
-      continue;
-    }
-
-    // ③ the full clue set must pin this solution (and be acceptable itself).
-    // On an irregular Shape Bank board we may carve the board instead of
-    // giving up: removing a whole region keeps the solution valid and often
-    // kills the alternative tilings.
-    let full = mkPuzzle(flatten(units));
-    let pinned = uniqueWith(full, solution);
-    const maxRepairs = useBank && opt.mask === 'symmetric' ? (opt.repairs ?? 4) : 0;
-    while (!pinned && repairs < maxRepairs) {
-      const carved = carveRegion(g, solution, full, rng);
-      if (!carved) break;
-      repairs++;
-      g = carved.grid;
-      solution = carved.solution;
-      walls = walls.filter((w) => g.active[w.a] && g.active[w.b]);
-      units = derive();
-      full = mkPuzzle(flatten(units));
-      pinned = uniqueWith(full, solution);
-    }
-    if (!pinned) {
-      report('not-unique');
-      continue;
-    }
-    const fullAnalysis = accept(full.clues);
-    if (!fullAnalysis) {
-      report('not-logical');
-      continue;
-    }
-
-    // ④–⑥ minimise against the oracle: first the walls (wall mode), then the clues
-    let startAnalysis = fullAnalysis;
-    if (wallMode) {
-      const fullClues = full.clues;
-      let kept = rng.shuffle(walls.slice());
-      let best = fullAnalysis;
-      const without = (drop: EdgeRef[]): boolean => {
-        const before = walls;
-        walls = kept.filter((w) => !drop.includes(w));
-        const a = accept(fullClues);
-        if (a) {
-          kept = walls;
-          best = a;
-          return true;
-        }
-        walls = before;
-        return false;
-      };
-      const CHUNK = 4;
-      const settled = new Set<EdgeRef>();
-      for (let i = 0; i + CHUNK <= kept.length; i += CHUNK) {
-        const chunk = kept.slice(i, i + CHUNK);
-        if (without(chunk)) for (const w of chunk) settled.add(w);
+    if (!prepared || order >= ordersPerSolution) {
+      prepared = null;
+      order = 0;
+      // ① board + solution
+      g = opt.mask === 'symmetric' ? makeGrid(rect.w, rect.h, randomMask(rect.w, rect.h, rng, { ratio: opt.holeRatio, symmetry: opt.symmetry, asymmetry: opt.asymmetry })) : rect;
+      let solution: Labels | null;
+      let decoys: ShapeKey[] = [];
+      if (useBank) {
+        const sizes = { minSize: Math.max(opt.bankShapeSizes?.[0] ?? 1, roseK), maxSize: opt.bankShapeSizes?.[1] };
+        const bank = catalogBank(rng, { count: opt.bankSize, ...sizes });
+        solution = tilePartition(g, bank, rng, { sizeSeparation: sizeSep });
+        if (opt.bankDecoys) decoys = catalogBank(rng, { count: opt.bankDecoys, ...sizes, exclude: bank });
+      } else {
+        const [sizeLo, sizeHi] = sizeBand();
+        solution = growPartition(g, rng, { minSize: sizeLo, maxSize: sizeHi, sizeSeparation: sizeSep, maxTips: roseOnly ? roseK : undefined });
       }
-      for (const w of kept.slice()) if (!settled.has(w)) without([w]);
-      walls = kept;
-      startAnalysis = best;
+      if (!solution) {
+        report('no-partition');
+        continue;
+      }
+      const wallRatio = opt.walls === true ? 0.1 + rng.next() * 0.2 : typeof opt.walls === 'number' ? opt.walls : 0;
+      walls = wallMode ? allBorders(g, solution) : wallRatio > 0 ? pickWalls(g, solution, rng, wallRatio) : [];
+
+      // ② all true clues
+      const derive = () =>
+        deriveClueUnits(g, solution!, rng, {
+          rules: opt.rules,
+          roseSymbols: opt.roseSymbols,
+          roseForced: roseOnly,
+          bankDecoys: decoys,
+          numbersPerRegion: opt.numbersPerRegion,
+          polyominoesPerRegion: opt.polyominoesPerRegion,
+          markersPerPair: opt.markersPerPair,
+        });
+      let units = derive();
+      // Every rule the puzzle was asked for must be derivable from this solution
+      // (twin markers need two same-shaped neighbours, rose needs big enough regions, …).
+      if (opt.rules.some((k) => !units.some((u) => u.kind === k))) {
+        report('no-clues');
+        continue;
+      }
+
+      // ③ the full clue set must pin this solution (and be acceptable itself).
+      // On an irregular Shape Bank board we may carve the board instead of
+      // giving up: removing a whole region keeps the solution valid and often
+      // kills the alternative tilings.
+      let full = mkPuzzle(flatten(units));
+      let pinned = uniqueWith(full, solution);
+      // Cell clues share out the cells (one symbol each), so which cells the rose
+      // symbols land on decides how much the numbers can say. Re-deal a few times
+      // before giving up on this solution.
+      const hasCellClues = opt.rules.some((r) => r === 'areaNumber' || r === 'polyomino');
+      for (let redeal = 0; !pinned && roseK > 0 && hasCellClues && redeal < 8; redeal++) {
+        units = derive();
+        full = mkPuzzle(flatten(units));
+        pinned = uniqueWith(full, solution);
+      }
+      const maxRepairs = useBank && opt.mask === 'symmetric' ? (opt.repairs ?? 4) : 0;
+      while (!pinned && repairs < maxRepairs) {
+        const carved = carveRegion(g, solution, full, rng);
+        if (!carved) break;
+        repairs++;
+        g = carved.grid;
+        solution = carved.solution;
+        walls = walls.filter((w) => g.active[w.a] && g.active[w.b]);
+        units = derive();
+        full = mkPuzzle(flatten(units));
+        pinned = uniqueWith(full, solution);
+      }
+      if (!pinned) {
+        report('not-unique');
+        continue;
+      }
+      cap = starHi;
+      let fullAnalysis = accept(full.clues);
+      if (!fullAnalysis) {
+        // Above the requested cap with every clue present? Aim for as easy as possible instead.
+        const a = solveLogically(full);
+        if (!a.solved || (!requireLogical && !isUniqueFast(full))) {
+          report('not-logical');
+          continue;
+        }
+        cap = a.stars;
+        fullAnalysis = a;
+      }
+      if (wallsFirst) fullAnalysis = minimiseWalls(full.clues, fullAnalysis);
+      prepared = { g, solution, walls, units, fullAnalysis, repairs };
+      seen.clear();
     }
-    const { kept, analysis } = minimise(units, startAnalysis, accept, rng, opt.keepRedundant ?? 0, opt.rules);
+
+    // One removal order on the prepared solution.
+    order++;
+    g = prepared.g;
+    walls = prepared.walls;
+    repairs = prepared.repairs;
+    const { solution, units } = prepared;
+
+    // ④–⑥ minimise against the oracle (walls last unless they went first at preparation)
+    const minimised = minimise(units, prepared.fullAnalysis, accept, rng, opt.keepRedundant ?? 0, opt.rules, prefer);
+    const kept = minimised.kept;
+    let analysis = minimised.analysis;
+    if (wallMode && !wallsFirst) analysis = minimiseWalls(flatten(kept), analysis);
     const puzzle = mkPuzzle(flatten(kept));
+    // Nothing left to vary on this solution (no removable local clues, say):
+    // move on rather than spend the remaining orders on the same puzzle.
+    const signature = JSON.stringify([puzzle.clues, walls]);
+    if (seen.has(signature)) order = ordersPerSolution;
+    seen.add(signature);
+    // With the cap lifted no order can bring this solution into range: one is enough.
+    if (cap > starHi) order = ordersPerSolution;
 
     // ⑦⑧ difficulty gate
     if (puzzle.clues.length > maxClues()) {
@@ -262,21 +397,43 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
       continue;
     }
     const result: GeneratedPuzzle = { puzzle, solution, analysis, seed, attempts: attempt };
-    if (analysis.stars >= starLo) {
+    if (analysis.stars >= starLo && analysis.stars <= starHi) {
       report('ok', analysis.stars, puzzle.clues.length);
       return result;
     }
     report('stars', analysis.stars, puzzle.clues.length);
-    // Keep the closest miss in case we run out of attempts.
-    if (!best || starLo - analysis.stars < starLo - best.analysis.stars) best = result;
+    // Keep the closest miss (on either side) in case we run out of attempts.
+    const miss = (st: number) => (st < starLo ? starLo - st : st - starHi);
+    if (!best || miss(analysis.stars) < miss(best.analysis.stars)) best = result;
   }
+  if (best) best.missed = true;
   return best;
 }
 
 /**
- * Fixed walls for a solution: a fraction of its border edges, chosen as short
- * straight runs so they read as designed leading rather than noise.
+ * Region size band when the caller gives none: about six to ten regions for
+ * the board, shifted up for hard targets and down for easy ones. Larger
+ * regions leave fewer clues and need more what-ifs (6x6: at 2-4 cells most
+ * windows are 2★, at 5-10 a third are 6-7★), so the band is part of aiming
+ * at the requested stars rather than a setting of its own.
  */
+export function autoSizeBand(width: number, height: number, starLo: number, starHi: number): [number, number] {
+  const side = Math.sqrt(width * height);
+  // Never below 3: two-cell regions next to each other can be re-paired
+  // without changing any number, so the full clue set is rarely unique.
+  let lo = side < 8.5 ? 3 : 4;
+  let hi = side < 5.5 ? 5 : side < 7 ? 6 : side < 8.5 ? 7 : 8;
+  if (starLo >= 5) {
+    lo += 1;
+    hi += 2;
+  } else if (starLo >= 3) {
+    hi += 1;
+  } else if (starHi <= 2) {
+    hi -= 1;
+  }
+  return [lo, hi];
+}
+
 /** Every border of a solution as fixed walls (the starting point of wall mode). */
 export function allBorders(g: Grid, solution: Labels): EdgeRef[] {
   const out: EdgeRef[] = [];
@@ -405,6 +562,7 @@ function minimise(
   rng: Rng,
   keepRedundant: number,
   mustShow: readonly RuleKind[] = [],
+  prefer?: 'hard',
 ): { kept: ClueUnit[]; analysis: LogicalResult } {
   const locals = rng.shuffle(units.filter((u) => !isGlobal(u)));
   const globals = rng.shuffle(units.filter(isGlobal));
@@ -434,7 +592,11 @@ function minimise(
 
   const CHUNK = 4;
   const settled = new Set<ClueUnit>();
-  for (let i = 0; i + CHUNK <= locals.length; i += CHUNK) {
+  // Chunked removal is a speed-up that also narrows the outcome: the same
+  // solution minimised clue by clue in random orders reaches high stars more
+  // often per second than any guided or chunked scheme tried, so a hard
+  // target goes straight to single removals.
+  for (let i = 0; prefer !== 'hard' && i + CHUNK <= locals.length; i += CHUNK) {
     const chunk = locals.slice(i, i + CHUNK);
     if (keepRedundant > 0 && chunk.some(() => rng.chance(keepRedundant))) continue;
     if (tryWithout(chunk)) for (const u of chunk) settled.add(u);

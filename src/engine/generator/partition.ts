@@ -18,6 +18,34 @@ export interface PartitionOptions {
   sizeSeparation?: boolean;
   /** reject partitions where two bordering regions have the same shape (Mingle) */
   distinctNeighbours?: boolean;
+  /**
+   * Rose-only puzzles: a region may have at most this many tips (cells whose
+   * removal leaves it connected), one per symbol. Regions that come out with
+   * more are regrown from their seed a few times before the partition is
+   * rejected.
+   */
+  maxTips?: number;
+}
+
+/** Cells of a region whose removal leaves it connected (a path's ends, a T's three tips). */
+export function tipCount(g: Grid, region: readonly number[]): number {
+  if (region.length <= 2) return region.length;
+  const inRegion = new Set(region);
+  let tips = 0;
+  for (const skip of region) {
+    const start = region.find((c) => c !== skip)!;
+    const seen = new Set([start]);
+    const stack = [start];
+    while (stack.length) {
+      const c = stack.pop()!;
+      for (const n of g.adj[c]) if (n !== skip && inRegion.has(n) && !seen.has(n)) {
+        seen.add(n);
+        stack.push(n);
+      }
+    }
+    if (seen.size === region.length - 1) tips++;
+  }
+  return tips;
 }
 
 export function growPartition(g: Grid, rng: Rng, opt: PartitionOptions, attempts = 200): Labels | null {
@@ -35,16 +63,30 @@ function growOnce(g: Grid, rng: Rng, opt: PartitionOptions): Labels | null {
   for (const seed of order) {
     if (labels[seed] >= 0) continue;
     const id = sizes.length;
-    const target = rng.range(opt.minSize, opt.maxSize);
-    const cells = [seed];
-    labels[seed] = id;
-    while (cells.length < target) {
-      const frontier: number[] = [];
-      for (const c of cells) for (const n of g.adj[c]) if (labels[n] < 0) frontier.push(n);
-      if (frontier.length === 0) break;
-      const pick = rng.pick(frontier);
-      labels[pick] = id;
-      cells.push(pick);
+    let target = rng.range(opt.minSize, opt.maxSize);
+    if (opt.sizeSeparation) {
+      // Size separation: pick a size the finished regions around the seed do
+      // not have, so that far fewer partitions are thrown away afterwards.
+      const taken = new Set<number>();
+      for (const n of g.adj[seed]) if (labels[n] >= 0) taken.add(sizes[labels[n]]);
+      const options: number[] = [];
+      for (let n = opt.minSize; n <= opt.maxSize; n++) if (!taken.has(n)) options.push(n);
+      if (options.length) target = rng.pick(options);
+    }
+    let cells = [seed];
+    for (let regrow = 0; ; regrow++) {
+      cells = [seed];
+      labels[seed] = id;
+      while (cells.length < target) {
+        const frontier: number[] = [];
+        for (const c of cells) for (const n of g.adj[c]) if (labels[n] < 0) frontier.push(n);
+        if (frontier.length === 0) break;
+        const pick = rng.pick(frontier);
+        labels[pick] = id;
+        cells.push(pick);
+      }
+      if (opt.maxTips === undefined || regrow >= 6 || tipCount(g, cells) <= opt.maxTips) break;
+      for (const c of cells) labels[c] = -1;
     }
     sizes.push(cells.length);
   }
@@ -109,6 +151,7 @@ export function adjacentRegions(g: Grid, labels: Labels): Map<string, number[]> 
 function acceptable(g: Grid, labels: Labels, opt: PartitionOptions): boolean {
   const regions = regionsOf(labels);
   if (regions.some((r) => r.length < opt.minSize || r.length > opt.maxSize)) return false;
+  if (opt.maxTips !== undefined && regions.some((r) => tipCount(g, r) > opt.maxTips!)) return false;
   if (opt.sizeSeparation || opt.distinctNeighbours) {
     const keys = regions.map((r) => regionKey(g.w, r));
     for (const key of adjacentRegions(g, labels).keys()) {

@@ -30,7 +30,8 @@ const revealBtn = $<HTMLButtonElement>('reveal');
 const warnDialog = $<HTMLDialogElement>('warn-dialog');
 
 /** A warning the user has to see: shown as a modal, not a status line. */
-function warn(text: string): void {
+function warn(text: string, title = M.warnTitle): void {
+  $('warn-title').textContent = title;
   $('warn-text').textContent = text;
   warnDialog.showModal();
 }
@@ -65,8 +66,6 @@ function readOptions(): GenerateOptions {
     width: num('w'),
     height: num('h'),
     rules,
-    minSize: num('min'),
-    maxSize: num('max'),
     stars: [num('starLo'), num('starHi')],
     seed: seedText ? Number(seedText) >>> 0 : undefined,
     mask: $<HTMLInputElement>('mask').checked ? 'symmetric' : 'rect',
@@ -79,15 +78,12 @@ function readOptions(): GenerateOptions {
 function writeOptions(o: GenerateOptions): void {
   $<HTMLInputElement>('w').value = String(o.width);
   $<HTMLInputElement>('h').value = String(o.height);
-  $<HTMLInputElement>('min').value = String(o.minSize ?? 3);
-  $<HTMLInputElement>('max').value = String(o.maxSize ?? 6);
   $<HTMLInputElement>('starLo').value = String(o.stars?.[0] ?? 1);
   $<HTMLInputElement>('starHi').value = String(o.stars?.[1] ?? 7);
   $<HTMLInputElement>('mask').checked = o.mask === 'symmetric';
   $<HTMLInputElement>('walls').checked = !!o.walls;
   $<HTMLInputElement>('rose').value = String(o.roseSymbols ?? 2);
   for (const i of form.querySelectorAll<HTMLInputElement>('#rules input')) i.checked = o.rules.includes(i.value as RuleKind);
-  $('size-row').hidden = o.rules.includes('shapeBank');
   $('rose-row').hidden = !o.rules.includes('rose');
 }
 
@@ -96,14 +92,15 @@ function optionsToHash(o: GenerateOptions): string {
     w: String(o.width),
     h: String(o.height),
     rules: o.rules.join(','),
-    min: String(o.minSize ?? 3),
-    max: String(o.maxSize ?? 6),
     stars: `${o.stars?.[0] ?? 1}-${o.stars?.[1] ?? 7}`,
     mask: o.mask === 'symmetric' ? '1' : '0',
     walls: o.walls ? '1' : '0',
     rose: String(o.roseSymbols ?? 2),
     seed: String(o.seed ?? ''),
   });
+  // region size is chosen by the generator; kept in the link only when set explicitly (older links)
+  if (o.minSize !== undefined) q.set('min', String(o.minSize));
+  if (o.maxSize !== undefined) q.set('max', String(o.maxSize));
   return `#${q}`;
 }
 
@@ -117,14 +114,14 @@ function optionsFromHash(): GenerateOptions | null {
     width: Number(q.get('w') ?? 6),
     height: Number(q.get('h') ?? 6),
     rules,
-    minSize: Number(q.get('min') ?? 3),
-    maxSize: Number(q.get('max') ?? 6),
     stars: [lo, hi ?? lo],
     mask: q.get('mask') === '1' ? 'symmetric' : 'rect',
     walls: q.get('walls') === '1',
     roseSymbols: Number(q.get('rose') ?? 2),
     seed: Number(q.get('seed')),
     attempts: 300,
+    ...(q.has('min') ? { minSize: Number(q.get('min')) } : {}),
+    ...(q.has('max') ? { maxSize: Number(q.get('max')) } : {}),
   };
 }
 
@@ -155,6 +152,10 @@ function startGenerate(opts: GenerateOptions, scrollUp = false): void {
     // asked for from the form at the bottom of a phone screen: bring the new window into view
     if (scrollUp) window.scrollTo({ top: 0, behavior: 'smooth' });
     saveLast({ puzzle: m.puzzle, solution: m.solution, stars: m.analysis.stars, difficulty: m.analysis.difficulty, hash: location.hash });
+    // The requested difficulty was not reached: say so instead of passing the
+    // closest miss off as what was asked for.
+    const [lo, hi] = opts.stars ?? [1, 7];
+    if (m.missed) warn(M.warnStarsMissed(lo, hi, m.analysis.stars), M.warnStarsMissedTitle);
   };
   worker.onerror = (e) => {
     genBtn.disabled = false;
@@ -375,7 +376,6 @@ function updateButtons(): void {
 const bankBox = form.querySelector<HTMLInputElement>('#rules input[value="shapeBank"]')!;
 const roseBox = form.querySelector<HTMLInputElement>('#rules input[value="rose"]')!;
 const syncRows = () => {
-  $('size-row').hidden = bankBox.checked;
   $('rose-row').hidden = !roseBox.checked;
 };
 bankBox.addEventListener('change', syncRows);
@@ -392,12 +392,6 @@ function generateFromForm(): void {
   const o = readOptions();
   if (!o.rules.length) {
     warn(M.warnNoRules);
-    return;
-  }
-  // Twin, unlike and size separation never forbid cutting a region in two, so
-  // on their own (even with every border pre-drawn) the solution is never unique.
-  if (o.rules.every((r) => r === 'gemini' || r === 'delta' || r === 'sizeSeparation')) {
-    warn(M.warnCannotOutline);
     return;
   }
   // Twin regions have the same shape, hence the same area: size separation forbids exactly that.

@@ -20,6 +20,8 @@ const REDUCED_MOTION = typeof matchMedia === 'function' && matchMedia('(prefers-
 const ROSE_GLYPHS = ['○', '△', '□', '☆', '◇', '♡'];
 const LONG_PRESS_MS = 450;
 const MOVE_SLOP = 8;
+/** a second tap on a just-cleared painted cell within this time walls its region instead */
+const DOUBLE_TAP_MS = 320;
 /** Border band width, as a fraction of the cell size on each side of an edge (was 0.2; halved). */
 const BAND_MARGIN = 0.1;
 
@@ -38,12 +40,13 @@ type Hit = { cell: number; zone: 'inner' | 'band'; edge: number };
  * border never leaves a stray wall behind:
  *   tap empty cell          start a new paint region (auto colour)
  *   tap painted cell        erase that cell (press-and-drag from it extends instead)
+ *   double-tap painted cell walls the whole region (the first tap's erase is taken back)
  *   drag (from anywhere)    paint: extend the region of the start cell (never across a wall);
  *                           if the drag's first new cell is already part of that same
  *                           region, the whole stroke erases instead (a quick way to clear
  *                           a region without switching to eraser mode)
  *   tap on a border         toggle a wall, applied on release (no dragging along borders)
- *   long-press on a cell    show the size of the wall-bounded area
+ *   long-press on a cell    show the size of its paint region, or of the empty area around it
  *   eraser mode             tap/drag removes paint (walls are removed by tapping them)
  */
 export class Board {
@@ -96,6 +99,8 @@ export class Board {
   private brush = 0;
   private longTimer: number | null = null;
   private areaCells: number[] | null = null;
+  /** the painted cell a tap just cleared, for the double-tap that walls its region */
+  private lastErase: { cell: number; at: number } | null = null;
 
   constructor(canvas: HTMLCanvasElement, cb: BoardCallbacks) {
     this.canvas = canvas;
@@ -273,12 +278,23 @@ export class Board {
     const hit = this.downHit;
     if (!ps || !hit) return;
     const tap = !this.moved && this.gesture === 'none';
-    if (tap && hit.zone === 'band') {
+    const now = performance.now();
+    const doubleTap = tap && hit.zone === 'inner' && this.lastErase !== null && this.lastErase.cell === hit.cell && now - this.lastErase.at < DOUBLE_TAP_MS;
+    this.lastErase = null;
+    if (doubleTap) {
+      // Second tap on the cell the first tap cleared: take the erase back and
+      // wall the region instead (the original's Shift+click).
+      ps.undo();
+      const id = ps.paint[hit.cell];
+      if (id) this.change(() => ps.wallAround(id));
+      else this.changed = true;
+    } else if (tap && hit.zone === 'band') {
       // walls toggle on release only, so a drag that began near a border paints instead
       if (!ps.fixed[hit.edge]) this.change(() => ps.toggleWall(hit.edge));
     } else if (tap && ps.paint[hit.cell]) {
       // a plain tap on a painted cell erases it (in eraser mode too)
       this.change(() => ps.erasePaint(hit.cell));
+      this.lastErase = { cell: hit.cell, at: now };
     } else if (tap && !this.eraser) {
       this.change(() => ps.newRegion(hit.cell));
     }
@@ -496,11 +512,27 @@ export class Board {
       }
       ctx.restore();
     }
+    // cells that carry a clue: their error hatching leaves the middle clear so the clue stays readable
+    const clueCells = new Set<number>();
+    for (const clue of p.clues) {
+      if (clue.type === 'areaNumber' || clue.type === 'polyomino') clueCells.add(clue.cell);
+      else if (clue.type === 'rose') for (const sym of clue.symbols) clueCells.add(sym.cell);
+    }
     for (let c = 0; c < g.cells; c++) {
       if (!g.active[c]) continue;
       if (this.errors.has(c) && this.hatch) {
         ctx.fillStyle = this.hatch;
-        ctx.fillRect(cellX(c), cellY(c), s, s);
+        const x = cellX(c);
+        const y = cellY(c);
+        if (clueCells.has(c)) {
+          const t = Math.max(6, s * 0.2);
+          ctx.fillRect(x, y, s, t);
+          ctx.fillRect(x, y + s - t, s, t);
+          ctx.fillRect(x, y + t, t, s - 2 * t);
+          ctx.fillRect(x + s - t, y + t, t, s - 2 * t);
+        } else {
+          ctx.fillRect(x, y, s, s);
+        }
       }
       if (this.areaCells?.includes(c)) {
         ctx.fillStyle = 'rgba(255,255,255,0.35)';
@@ -671,9 +703,22 @@ export class Board {
       ctx.arc(mx, my, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = LEAD;
-      ctx.font = `${Math.round(r * 1.5)}px sans-serif`;
-      ctx.fillText(clue.type === 'gemini' ? '=' : '≠', mx, my + 0.5);
+      // The glyph is drawn as strokes, not text: a font's "=" sits on its math
+      // axis, which lands above the circle's centre and differs per platform.
+      ctx.lineWidth = Math.max(1.2, r * 0.22);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      const half = r * 0.5;
+      const gap = r * 0.26;
+      ctx.moveTo(mx - half, my - gap);
+      ctx.lineTo(mx + half, my - gap);
+      ctx.moveTo(mx - half, my + gap);
+      ctx.lineTo(mx + half, my + gap);
+      if (clue.type === 'delta') {
+        ctx.moveTo(mx + r * 0.32, my - r * 0.62);
+        ctx.lineTo(mx - r * 0.32, my + r * 0.62);
+      }
+      ctx.stroke();
     }
 
     // area counter

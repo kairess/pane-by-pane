@@ -372,12 +372,51 @@ export class PlayerState {
     return out;
   }
 
-  /** Size of the wall-bounded area containing `cell`. */
+  /**
+   * The area under `cell`, as the player sees it: a painted cell's whole paint
+   * region (walls or not), or for an empty cell the empty cells reachable from
+   * it without crossing a wall or entering paint.
+   */
   areaOf(cell: number): { count: number; cells: number[] } {
-    const labels = this.labelsByWalls();
-    const cells: number[] = [];
-    for (let c = 0; c < this.grid.cells; c++) if (labels[c] === labels[cell]) cells.push(c);
+    const g = this.grid;
+    if (this.paint[cell]) {
+      const cells = this.regionCells(this.paint[cell]);
+      return { count: cells.length, cells };
+    }
+    const seen = new Set<number>([cell]);
+    const stack = [cell];
+    while (stack.length) {
+      const c = stack.pop()!;
+      const es = g.adjEdge[c];
+      for (let i = 0; i < es.length; i++) {
+        if (this.isWall(es[i])) continue;
+        const o = g.adj[c][i];
+        if (this.paint[o] || seen.has(o)) continue;
+        seen.add(o);
+        stack.push(o);
+      }
+    }
+    const cells = [...seen].sort((a, b) => a - b);
     return { count: cells.length, cells };
+  }
+
+  /**
+   * Draw a wall on every border of a paint region, like the original's
+   * Shift+click; when the region is already fully walled, take the drawn
+   * walls away again. Fixed walls are left alone. Returns the number of
+   * edges changed.
+   */
+  wallAround(id: number): number {
+    const g = this.grid;
+    const border: number[] = [];
+    for (const c of this.regionCells(id)) {
+      const es = g.adjEdge[c];
+      for (let i = 0; i < es.length; i++) if (this.paint[g.adj[c][i]] !== id && !this.fixed[es[i]]) border.push(es[i]);
+    }
+    const missing = border.filter((e) => this.edge[e] !== WALL);
+    const targets = missing.length ? missing : border;
+    for (const e of targets) this.setEdge(e, missing.length ? WALL : NONE);
+    return targets.length;
   }
 
   // -- persistence -------------------------------------------------------------

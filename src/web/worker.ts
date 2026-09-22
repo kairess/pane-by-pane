@@ -6,7 +6,7 @@ import type { Puzzle } from '../engine/types.ts';
 export type WorkerIn = { type: 'generate'; opts: GenerateOptions };
 export type WorkerOut =
   | { type: 'progress'; attempt: number; reason: string }
-  | { type: 'result'; puzzle: Puzzle; solution: number[]; analysis: Omit<LogicalResult, 'labels'>; seed: number }
+  | { type: 'result'; puzzle: Puzzle; solution: number[]; analysis: Omit<LogicalResult, 'labels'>; seed: number; missed: boolean }
   | { type: 'none' };
 
 const post = (m: WorkerOut) => (self as unknown as { postMessage(m: unknown): void }).postMessage(m);
@@ -23,5 +23,5 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     return;
   }
   const { labels: _labels, ...analysis } = r.analysis;
-  post({ type: 'result', puzzle: r.puzzle, solution: Array.from(r.solution), analysis, seed: r.seed });
+  post({ type: 'result', puzzle: r.puzzle, solution: Array.from(r.solution), analysis, seed: r.seed, missed: r.missed === true });
 });

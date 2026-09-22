@@ -338,6 +338,8 @@ function explain(technique: string, value: 'wall' | 'join', A: string, B: string
       return h.reachExact(A, target);
     case 'shape-place':
       return value === 'wall' ? h.shapePlaceWall(A) : h.shapePlaceJoin(A);
+    case 'lookahead':
+      return value === 'wall' ? h.lookaheadWall : h.lookaheadJoin;
     case 'bifurcation':
       return value === 'wall' ? h.bifurcationWall : h.bifurcationJoin;
     default:
