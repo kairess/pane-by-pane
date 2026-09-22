@@ -172,3 +172,31 @@ export function shapeToAscii(key: ShapeKey): string[] {
   for (const [x, y] of pts) rows[y][x] = '#';
   return rows.map((r) => r.join(''));
 }
+
+const polyCache = new Map<number, ShapeKey[]>();
+/** Every free polyomino of `n` cells (1, 1, 2, 5, 12, 35, 108, 369, 1285 for n = 1..9). */
+export function allPolyominoes(n: number): ShapeKey[] {
+  const hit = polyCache.get(n);
+  if (hit) return hit;
+  let cur = new Set<ShapeKey>(['0,0']);
+  for (let k = 1; k < n; k++) {
+    const next = new Set<ShapeKey>();
+    for (const key of cur) {
+      const pts = parseKey(key);
+      const has = new Set(pts.map(([x, y]) => `${x},${y}`));
+      for (const [x, y] of pts) {
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nk = `${x + dx},${y + dy}`;
+          if (has.has(nk)) continue;
+          next.add(canonical([...pts, [x + dx, y + dy]]));
+        }
+      }
+    }
+    cur = next;
+  }
+  const out = [...cur];
+  polyCache.set(n, out);
+  return out;
+}
+
+

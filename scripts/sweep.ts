@@ -18,6 +18,12 @@ const sets: RuleKind[][] = [
   ['areaNumber'], ['range'], ['shapeBank'], ['polyomino'], ['gemini', 'delta'], ['rose'], ['sizeSeparation'],
   ['areaNumber', 'rose'], ['rose', 'gemini', 'delta'], ['rose', 'sizeSeparation'], ['range', 'sizeSeparation'],
   ['polyomino', 'rose'], ['areaNumber', 'range', 'gemini', 'delta', 'rose'],
+  // A-grade rules (docs/A_RULES.md)
+  ['solitude', 'areaNumber'], ['solitude', 'areaNumber', 'polyomino'], ['boxy', 'areaNumber'], ['boxy', 'range'], ['nonBoxy'], ['nonBoxy', 'areaNumber'],
+  ['inequality'], ['inequality', 'areaNumber'], ['difference'], ['difference', 'areaNumber'], ['inequality', 'difference', 'range'],
+  ['mingle'], ['mingle', 'shapeBank'], ['mingle', 'polyomino', 'shapeBank'],
+  // the original's later windows (docs/MIXED_RULES.md)
+  ['match', 'rose'], ['mismatch'], ['mismatch', 'polyomino'], ['palisade'], ['palisade', 'solitude', 'areaNumber'], ['bricky', 'areaNumber'], ['loopy', 'areaNumber'], ['watchtower', 'areaNumber'], ['boxy', 'mismatch'],
 ];
 const sizes = (process.argv[2] ?? '4,7,9').split(',').map(Number);
 let none = 0;

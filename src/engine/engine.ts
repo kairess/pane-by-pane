@@ -29,10 +29,18 @@ function validate(p: Puzzle, g: Grid): void {
         break;
       case 'gemini':
       case 'delta':
+      case 'inequality':
+      case 'difference':
         if (!cellOk(c.edge.a) || !cellOk(c.edge.b)) throw new Error(`bad ${c.type} clue`);
         break;
       case 'rose':
         for (const s of c.symbols) if (!cellOk(s.cell)) throw new Error('bad rose clue');
+        break;
+      case 'palisade':
+        if (!cellOk(c.cell) || !Number.isInteger(c.sides) || c.sides < 0 || c.sides > 15) throw new Error('bad palisade clue');
+        break;
+      case 'watchtower':
+        if (!Number.isInteger(c.x) || !Number.isInteger(c.y) || c.x < 0 || c.y < 0 || c.x > g.w || c.y > g.h) throw new Error('bad watchtower clue');
         break;
       default:
         break;

@@ -515,7 +515,7 @@ export class Board {
     // cells that carry a clue: their error hatching leaves the middle clear so the clue stays readable
     const clueCells = new Set<number>();
     for (const clue of p.clues) {
-      if (clue.type === 'areaNumber' || clue.type === 'polyomino') clueCells.add(clue.cell);
+      if (clue.type === 'areaNumber' || clue.type === 'polyomino' || clue.type === 'palisade') clueCells.add(clue.cell);
       else if (clue.type === 'rose') for (const sym of clue.symbols) clueCells.add(sym.cell);
     }
     for (let c = 0; c < g.cells; c++) {
@@ -567,6 +567,7 @@ export class Board {
       if (clue.type === 'areaNumber') this.text(String(clue.value), clue.cell, clueFont);
       else if (clue.type === 'rose') for (const sym of clue.symbols) this.text(ROSE_GLYPHS[sym.symbol] ?? String(sym.symbol), sym.cell, `${Math.round(s * 0.42)}px sans-serif`);
       else if (clue.type === 'polyomino') this.miniShape(clue.shape, clue.cell);
+      else if (clue.type === 'palisade') this.palisadeTile(clue.sides, clue.cell);
     }
     ctx.globalAlpha = 1;
     if (lit > 0 && this.complete) this.drawShine();
@@ -688,9 +689,9 @@ export class Board {
     }
     this.strokeLead(lead, leadW);
 
-    // edge markers (gemini / delta), like small solder tags on the leading
+    // edge markers (gemini / delta / inequality / difference), like small solder tags on the leading
     for (const clue of p.clues) {
-      if (clue.type !== 'gemini' && clue.type !== 'delta') continue;
+      if (clue.type !== 'gemini' && clue.type !== 'delta' && clue.type !== 'inequality' && clue.type !== 'difference') continue;
       const e = edgeBetween(g, clue.edge.a, clue.edge.b);
       const [x1, y1, x2, y2] = this.edgeSegment(e);
       const mx = (x1 + x2) / 2;
@@ -703,12 +704,41 @@ export class Board {
       ctx.arc(mx, my, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      if (clue.type === 'difference') {
+        ctx.fillStyle = INK;
+        ctx.font = `700 ${Math.round(r * 1.45)}px ${CLUE_FONT}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(clue.value), mx, my + r * 0.08);
+        continue;
+      }
       // The glyph is drawn as strokes, not text: a font's "=" sits on its math
       // axis, which lands above the circle's centre and differs per platform.
       ctx.lineWidth = Math.max(1.2, r * 0.22);
       ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
       ctx.beginPath();
       const half = r * 0.5;
+      if (clue.type === 'inequality') {
+        // a chevron whose open side faces the larger region: the marked edge is
+        // vertical (cells left/right) or horizontal (cells above/below)
+        const larger = clue.larger === 'a' ? clue.edge.a : clue.edge.b;
+        const vertical = x1 === x2;
+        const toward = vertical ? (larger % g.w < (larger === clue.edge.a ? clue.edge.b : clue.edge.a) % g.w ? -1 : 1) : larger < (larger === clue.edge.a ? clue.edge.b : clue.edge.a) ? -1 : 1;
+        // the point of the chevron lies on the smaller side
+        const tip = half * 0.9;
+        if (vertical) {
+          ctx.moveTo(mx + toward * tip, my - half);
+          ctx.lineTo(mx - toward * tip * 0.55, my);
+          ctx.lineTo(mx + toward * tip, my + half);
+        } else {
+          ctx.moveTo(mx - half, my + toward * tip);
+          ctx.lineTo(mx, my - toward * tip * 0.55);
+          ctx.lineTo(mx + half, my + toward * tip);
+        }
+        ctx.stroke();
+        continue;
+      }
       const gap = r * 0.26;
       ctx.moveTo(mx - half, my - gap);
       ctx.lineTo(mx + half, my - gap);
@@ -719,6 +749,26 @@ export class Board {
         ctx.lineTo(mx - r * 0.32, my + r * 0.62);
       }
       ctx.stroke();
+    }
+
+    // watchtowers: a small dark tower on the vertex with the number of regions it sees
+    for (const clue of p.clues) {
+      if (clue.type !== 'watchtower') continue;
+      const cx = pad + clue.x * s;
+      const cy = pad + clue.y * s;
+      const r = s * 0.16;
+      ctx.fillStyle = '#2b2733';
+      ctx.strokeStyle = '#fbf7ef';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fbf7ef';
+      ctx.font = `700 ${Math.round(r * 1.5)}px ${CLUE_FONT}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(clue.count), cx, cy + r * 0.08);
     }
 
     // area counter
@@ -785,6 +835,34 @@ export class Board {
     ctx.strokeText(t, px, py);
     ctx.fillStyle = INK;
     ctx.fillText(t, px, py);
+  }
+
+  /** Palisade tile: a small square whose sides are drawn thick where the cell's sides are borders. */
+  private palisadeTile(sides: number, cell: number): void {
+    const g = this.grid!;
+    const x = cell % g.w;
+    const y = (cell - x) / g.w;
+    const ctx = this.ctx;
+    const half = this.cell * 0.22;
+    const cx = this.pad + (x + 0.5) * this.cell;
+    const cy = this.pad + (y + 0.5) * this.cell;
+    ctx.lineCap = 'square';
+    ctx.strokeStyle = 'rgba(23,22,26,0.28)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(cx - half, cy - half, half * 2, half * 2);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = Math.max(2.5, this.cell * 0.07);
+    ctx.beginPath();
+    const corners: [number, number][] = [[cx - half, cy - half], [cx + half, cy - half], [cx + half, cy + half], [cx - half, cy + half]];
+    for (let dir = 0; dir < 4; dir++) {
+      if (!((sides >> dir) & 1)) continue;
+      const [ax, ay] = corners[dir];
+      const [bx, by] = corners[(dir + 1) % 4];
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+    }
+    ctx.stroke();
+    ctx.lineCap = 'round';
   }
 
   private miniShape(key: ShapeKey, cell: number): void {

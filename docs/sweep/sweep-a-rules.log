@@ -1,0 +1,144 @@
+6x6 solitude+areaNumber                  1-1 rect      1★         35 ms
+6x6 solitude+areaNumber                  1-1 symmetric 1★         15 ms
+6x6 solitude+areaNumber                  7-7 rect      6★ missed  657 ms
+6x6 solitude+areaNumber                  7-7 symmetric 4★ missed  270 ms
+6x6 solitude+areaNumber+polyomino        1-1 rect      1★         26 ms
+6x6 solitude+areaNumber+polyomino        1-1 symmetric 1★         6 ms
+6x6 solitude+areaNumber+polyomino        7-7 rect      6★ missed  264 ms
+6x6 solitude+areaNumber+polyomino        7-7 symmetric 2★ missed  25 ms
+6x6 solitude+polyomino                   1-1 rect      1★         5 ms
+6x6 solitude+polyomino                   1-1 symmetric 1★         2 ms
+6x6 solitude+polyomino                   7-7 rect      2★ missed  32 ms
+6x6 solitude+polyomino                   7-7 symmetric 2★ missed  18 ms
+6x6 boxy+areaNumber                      1-1 rect      1★         34 ms
+6x6 boxy+areaNumber                      1-1 symmetric 1★         19 ms
+6x6 boxy+areaNumber                      7-7 rect      5★ missed  10299 ms
+6x6 boxy+areaNumber                      7-7 symmetric 2★ missed  540 ms
+6x6 boxy+range                           1-1 rect      1★         49 ms
+6x6 boxy+range                           1-1 symmetric 1★         18 ms
+6x6 boxy+range                           7-7 rect      5★ missed  2662 ms
+6x6 boxy+range                           7-7 symmetric 2★ missed  356 ms
+6x6 boxy+rose                            1-1 rect      1★         150 ms
+6x6 boxy+rose                            1-1 symmetric 1★         15 ms
+6x6 boxy+rose                            7-7 rect      2★ missed  707 ms
+6x6 boxy+rose                            7-7 symmetric NONE       5 ms
+6x6 nonBoxy                              1-1 rect      1★         53 ms
+6x6 nonBoxy                              1-1 symmetric 1★         14 ms
+6x6 nonBoxy                              7-7 rect      5★ missed  92 ms
+6x6 nonBoxy                              7-7 symmetric 2★ missed  42 ms
+6x6 nonBoxy+areaNumber                   1-1 rect      1★         196 ms
+6x6 nonBoxy+areaNumber                   1-1 symmetric 1★         18 ms
+6x6 nonBoxy+areaNumber                   7-7 rect      7★         1290 ms
+6x6 nonBoxy+areaNumber                   7-7 symmetric 7★         253 ms
+6x6 nonBoxy+range                        1-1 rect      1★         51 ms
+6x6 nonBoxy+range                        1-1 symmetric 1★         14 ms
+6x6 nonBoxy+range                        7-7 rect      7★         3804 ms
+6x6 nonBoxy+range                        7-7 symmetric 6★ missed  1508 ms
+6x6 inequality                           1-1 rect      1★         13 ms
+6x6 inequality                           1-1 symmetric 1★         9 ms
+6x6 inequality                           7-7 rect      5★ missed  522 ms
+6x6 inequality                           7-7 symmetric 3★ missed  306 ms
+6x6 inequality+areaNumber                1-1 rect      1★         396 ms
+6x6 inequality+areaNumber                1-1 symmetric 1★         57 ms
+6x6 inequality+areaNumber                7-7 rect      7★         698 ms
+6x6 inequality+areaNumber                7-7 symmetric 7★         1814 ms
+6x6 difference                           1-1 rect      1★         47 ms
+6x6 difference                           1-1 symmetric 1★         11 ms
+6x6 difference                           7-7 rect      6★ missed  4172 ms
+6x6 difference                           7-7 symmetric 7★         212 ms
+6x6 difference+areaNumber                1-1 rect      1★         303 ms
+6x6 difference+areaNumber                1-1 symmetric 1★         38 ms
+6x6 difference+areaNumber                7-7 rect      7★         372 ms
+6x6 difference+areaNumber                7-7 symmetric 7★         1522 ms
+6x6 inequality+difference+range          1-1 rect      1★         43 ms
+6x6 inequality+difference+range          1-1 symmetric 1★         13 ms
+6x6 inequality+difference+range          7-7 rect      7★         841 ms
+6x6 inequality+difference+range          7-7 symmetric 7★         28 ms
+6x6 inequality+sizeSeparation            1-1 rect      1★         60 ms
+6x6 inequality+sizeSeparation            1-1 symmetric 1★         23 ms
+6x6 inequality+sizeSeparation            7-7 rect      7★         1043 ms
+6x6 inequality+sizeSeparation            7-7 symmetric 7★         311 ms
+6x6 difference+polyomino                 1-1 rect      1★         27 ms
+6x6 difference+polyomino                 1-1 symmetric 1★         4 ms
+6x6 difference+polyomino                 7-7 rect      7★         367 ms
+6x6 difference+polyomino                 7-7 symmetric 7★         156 ms
+6x6 boxy+solitude+areaNumber             1-1 rect      1★         14 ms
+6x6 boxy+solitude+areaNumber             1-1 symmetric 1★         3 ms
+6x6 boxy+solitude+areaNumber             7-7 rect      2★ missed  730 ms
+6x6 boxy+solitude+areaNumber             7-7 symmetric 2★ missed  45 ms
+6x6 nonBoxy+inequality+areaNumber        1-1 rect      1★         948 ms
+6x6 nonBoxy+inequality+areaNumber        1-1 symmetric 1★         27 ms
+6x6 nonBoxy+inequality+areaNumber        7-7 rect      7★         913 ms
+6x6 nonBoxy+inequality+areaNumber        7-7 symmetric 7★         149 ms
+8x8 solitude+areaNumber                  1-1 rect      1★         218 ms
+8x8 solitude+areaNumber                  1-1 symmetric 1★         22 ms
+8x8 solitude+areaNumber                  7-7 rect      7★         5572 ms
+8x8 solitude+areaNumber                  7-7 symmetric 6★ missed  2102 ms
+8x8 solitude+areaNumber+polyomino        1-1 rect      1★         39 ms
+8x8 solitude+areaNumber+polyomino        1-1 symmetric 1★         16 ms
+8x8 solitude+areaNumber+polyomino        7-7 rect      7★         2145 ms
+8x8 solitude+areaNumber+polyomino        7-7 symmetric 7★         1250 ms
+8x8 solitude+polyomino                   1-1 rect      1★         21 ms
+8x8 solitude+polyomino                   1-1 symmetric 1★         13 ms
+8x8 solitude+polyomino                   7-7 rect      5★ missed  638 ms
+8x8 solitude+polyomino                   7-7 symmetric 2★ missed  34 ms
+8x8 boxy+areaNumber                      1-1 rect      1★         872 ms
+8x8 boxy+areaNumber                      1-1 symmetric 1★         56 ms
+8x8 boxy+areaNumber                      7-7 rect      7★         7496 ms
+8x8 boxy+areaNumber                      7-7 symmetric 2★ missed  1041 ms
+8x8 boxy+range                           1-1 rect      1★         194 ms
+8x8 boxy+range                           1-1 symmetric 1★         119 ms
+8x8 boxy+range                           7-7 rect      3★ missed  8386 ms
+8x8 boxy+range                           7-7 symmetric 2★ missed  2482 ms
+8x8 boxy+rose                            1-1 rect      1★         200 ms
+8x8 boxy+rose                            1-1 symmetric 1★         123 ms
+8x8 boxy+rose                            7-7 rect      NONE       95 ms
+8x8 boxy+rose                            7-7 symmetric 2★ missed  253 ms
+8x8 nonBoxy                              1-1 rect      1★         181 ms
+8x8 nonBoxy                              1-1 symmetric 1★         76 ms
+8x8 nonBoxy                              7-7 rect      NONE       48 ms
+8x8 nonBoxy                              7-7 symmetric NONE       43 ms
+8x8 nonBoxy+areaNumber                   1-1 rect      1★         282 ms
+8x8 nonBoxy+areaNumber                   1-1 symmetric 1★         87 ms
+8x8 nonBoxy+areaNumber                   7-7 rect      7★         2937 ms
+8x8 nonBoxy+areaNumber                   7-7 symmetric 7★         2942 ms
+8x8 nonBoxy+range                        1-1 rect      1★         268 ms
+8x8 nonBoxy+range                        1-1 symmetric 1★         112 ms
+8x8 nonBoxy+range                        7-7 rect      7★         7580 ms
+8x8 nonBoxy+range                        7-7 symmetric 7★         2383 ms
+8x8 inequality                           1-1 rect      1★         46 ms
+8x8 inequality                           1-1 symmetric 1★         20 ms
+8x8 inequality                           7-7 rect      6★ missed  3678 ms
+8x8 inequality                           7-7 symmetric 4★ missed  898 ms
+8x8 inequality+areaNumber                1-1 rect      1★         1109 ms
+8x8 inequality+areaNumber                1-1 symmetric 1★         92 ms
+8x8 inequality+areaNumber                7-7 rect      7★         2863 ms
+8x8 inequality+areaNumber                7-7 symmetric 7★         7176 ms
+8x8 difference                           1-1 rect      1★         106 ms
+8x8 difference                           1-1 symmetric 1★         58 ms
+8x8 difference                           7-7 rect      7★         1730 ms
+8x8 difference                           7-7 symmetric 7★         705 ms
+8x8 difference+areaNumber                1-1 rect      1★         288 ms
+8x8 difference+areaNumber                1-1 symmetric 1★         67 ms
+8x8 difference+areaNumber                7-7 rect      7★         3064 ms
+8x8 difference+areaNumber                7-7 symmetric 7★         4646 ms
+8x8 inequality+difference+range          1-1 rect      1★         201 ms
+8x8 inequality+difference+range          1-1 symmetric 1★         55 ms
+8x8 inequality+difference+range          7-7 rect      7★         9473 ms
+8x8 inequality+difference+range          7-7 symmetric 7★         4409 ms
+8x8 inequality+sizeSeparation            1-1 rect      1★         157 ms
+8x8 inequality+sizeSeparation            1-1 symmetric NONE       139 ms
+8x8 inequality+sizeSeparation            7-7 rect      7★         2638 ms
+8x8 inequality+sizeSeparation            7-7 symmetric NONE       139 ms
+8x8 difference+polyomino                 1-1 rect      1★         208 ms
+8x8 difference+polyomino                 1-1 symmetric 1★         42 ms
+8x8 difference+polyomino                 7-7 rect      7★         3881 ms
+8x8 difference+polyomino                 7-7 symmetric 7★         383 ms
+8x8 boxy+solitude+areaNumber             1-1 rect      1★         30 ms
+8x8 boxy+solitude+areaNumber             1-1 symmetric 1★         17 ms
+8x8 boxy+solitude+areaNumber             7-7 rect      2★ missed  455 ms
+8x8 boxy+solitude+areaNumber             7-7 symmetric 2★ missed  182 ms
+8x8 nonBoxy+inequality+areaNumber        1-1 rect      1★         1023 ms
+8x8 nonBoxy+inequality+areaNumber        1-1 symmetric 1★         179 ms
+8x8 nonBoxy+inequality+areaNumber        7-7 rect      7★         4518 ms
+8x8 nonBoxy+inequality+areaNumber        7-7 symmetric 7★         2528 ms

@@ -1,7 +1,7 @@
 import type { Grid } from '../grid.ts';
 import type { Comp, State } from '../state.ts';
 import type { AreaNumberClue, Labels, RangeClue } from '../types.ts';
-import type { Deduction, Rule } from './rule.ts';
+import type { Deduction, RegionSizes, Rule } from './rule.ts';
 
 /** Area Number: the region containing the clue cell has exactly `value` cells. */
 export class AreaNumberRule implements Rule {
@@ -49,6 +49,10 @@ export class RangeRule implements Rule {
 
   propagate(): boolean {
     return true;
+  }
+
+  regionSizes(): RegionSizes {
+    return { lo: this.min, hi: this.max };
   }
 
   check(_g: Grid, _labels: Labels, regions: number[][]): boolean {

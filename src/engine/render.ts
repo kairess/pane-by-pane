@@ -43,6 +43,50 @@ export function render(puzzle: Puzzle, labels?: Labels): string {
       case 'sizeSeparation':
         globals.push('size separation');
         break;
+      case 'solitude':
+        globals.push('solitude');
+        break;
+      case 'mingle':
+        globals.push('mingle');
+        break;
+      case 'match':
+        globals.push('match');
+        break;
+      case 'mismatch':
+        globals.push('mismatch');
+        break;
+      case 'bricky':
+        globals.push('bricky');
+        break;
+      case 'loopy':
+        globals.push('loopy');
+        break;
+      case 'palisade':
+        cellText[c.cell] = '#';
+        globals.push(`palisade @${c.cell}: ${['N', 'E', 'S', 'W'].filter((_, i) => (c.sides >> i) & 1).join('') || '-'}`);
+        break;
+      case 'watchtower':
+        globals.push(`watchtower @(${c.x},${c.y}): ${c.count}`);
+        break;
+      case 'boxy':
+        globals.push('boxy');
+        break;
+      case 'nonBoxy':
+        globals.push('non-boxy');
+        break;
+      case 'inequality': {
+        // '>' when the first cell (left / top) is the larger side
+        const e = edgeBetween(g, c.edge.a, c.edge.b);
+        if (e < 0) throw new Error(`cells ${c.edge.a},${c.edge.b} are not adjacent`);
+        edgeMark.set(e, c.larger === 'a' ? '>' : '<');
+        break;
+      }
+      case 'difference': {
+        const e = edgeBetween(g, c.edge.a, c.edge.b);
+        if (e < 0) throw new Error(`cells ${c.edge.a},${c.edge.b} are not adjacent`);
+        edgeMark.set(e, c.value < 10 ? String(c.value) : '+');
+        break;
+      }
     }
   }
   const act = (x: number, y: number) => x >= 0 && y >= 0 && x < g.w && y < g.h && g.active[y * g.w + x] === 1;

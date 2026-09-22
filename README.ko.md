@@ -7,7 +7,7 @@ TypeScript로 작성되어 있고 외부 런타임 의존성이 없어서 나중
 
 배경 조사는 [docs/IDEA.md](docs/IDEA.md), 룰 분석은 [docs/GIMMICKS.md](docs/GIMMICKS.md) 참고.
 
-## 구현된 룰 (S급 8종 + 파생)
+## 구현된 룰 (원작 24종 중 20종: Compass·Minimum/Maximum 개별 옵션 제외)
 
 | 룰 | clue 타입 | 설명 |
 | --- | --- | --- |
@@ -17,8 +17,22 @@ TypeScript로 작성되어 있고 외부 런타임 의존성이 없어서 나중
 | Polyomino | `polyomino` | clue 셀이 속한 region의 모양이 지정 polyomino |
 | Gemini | `gemini` | 마커 edge는 경계이고 양쪽 region 모양이 같음 |
 | Delta | `delta` | 마커 edge는 경계이고 양쪽 region 모양이 다름 |
-| Rose Window / Solitude | `rose` | 모든 region이 각 symbol을 정확히 하나씩 포함 (`symbolCount: 1`이 Solitude) |
+| Rose Window | `rose` | 모든 region이 각 symbol을 정확히 하나씩 포함 (`symbolCount: 1`은 기호 한 종류 장미창) |
 | Size Separation | `sizeSeparation` | 경계를 공유하는 region은 넓이가 다름 |
+| Solitude | `solitude` | 모든 region에 기호(넓이의 수·폴리오미노 셀 단서)가 정확히 하나. 원작처럼 단독으로는 못 쓰고 장미창과도 함께 쓰지 않음 |
+| Boxy | `boxy` | 모든 region이 직사각형. 직사각형은 언제나 둘로 자를 수 있으므로 넓이를 정하는 규칙이 하나 필요 |
+| Non-Boxy | `nonBoxy` | 어떤 region도 직사각형이 아님 (따라서 모든 region이 3칸 이상) |
+| Inequality | `inequality` | 마커 edge는 경계이고 `larger` 쪽 region의 넓이가 더 큼 |
+| Difference | `difference` | 마커 edge는 경계이고 양쪽 region의 넓이 차이가 정확히 `value` (0 = 같은 넓이) |
+| Mingle Shape | `mingle` | 경계를 공유하는 region은 모양이 다름 (모든 경계에 Delta). 쌍둥이와 함께 쓰지 않음 |
+| Match | `match` | 모든 region이 같은 모양 (따라서 같은 넓이) |
+| Mismatch | `mismatch` | 모든 region이 서로 다른 모양. 작은 모양이 다 쓰이면 구역을 자를 수 없다는 세기 추론(`mismatch-count`) 포함 |
+| Palisade | `palisade` | clue 셀의 네 변(N=1, E=2, S=4, W=8 비트)이 표시된 곳에만 경계. 창 가장자리·구멍 쪽 변은 경계 |
+| Bricky | `bricky` | 한 꼭짓점에 경계선 4개 금지 |
+| Loopy | `loopy` | 모든 꼭짓점의 경계선 수가 짝수(0·2·4). 경계선이 창 가장자리에 닿지 못하므로 모든 region은 섬 |
+| Watchtower | `watchtower` | 꼭짓점 (`x`,`y`) 둘레의 서로 다른 region 수 = `count` |
+
+A급 다섯 규칙의 원작 검증과 설계 근거는 [docs/A_RULES.md](docs/A_RULES.md)에, 원작 난이도 5~7 퍼즐의 구조 분석과 그에 맞춘 생성기 변경(정확한 크기 타일링, 배수 재단, 창고 타일링 구멍, 쌍둥이 쌍 심기, 큰 장미창)은 [docs/HARD_PUZZLES.md](docs/HARD_PUZZLES.md)에 있습니다. 웹 폼은 12×12까지 허용합니다(원작의 어려운 창은 70~120칸). 원작 전 창의 규칙 조합(663개 퍼즐, 114개 조합)과 그에 맞춘 생성기·엔진 보강은 [docs/MIXED_RULES.md](docs/MIXED_RULES.md)에 있습니다. 논리 solver에는 원작 Precision 풀이의 핵심인 **나눗셈 추론**(`pocket-count`: 경계선을 그으면 잘리는 칸 수를 구역 넓이로 채울 수 없으면 이음)이 들어 있어, Range·Precision·Shape Bank·Non-Boxy의 넓이 제한 아래에서 1~2등급 기법으로 잡힙니다.
 
 ## 사용
 
@@ -51,6 +65,10 @@ node src/cli.ts gen   --size 6 --rules areaNumber,gemini,delta --stars 2-3 --cou
 node src/cli.ts gen   --size 6 --rules shapeBank,delta --bank 3 --min 3 --max 5 --stars 4-5
 node src/cli.ts gen   --size 6 --rules rose,polyomino --rose 2 --min 3 --max 5
 node src/cli.ts gen   --w 6 --h 8 --rules shapeBank --min 2 --max 6 --mask   # 비정형 격자, 원작 카탈로그 bank
+node src/cli.ts gen   --size 6 --rules solitude,areaNumber,polyomino --mask --walls   # 유일: 구역마다 단서 하나
+node src/cli.ts gen   --size 6 --rules boxy,areaNumber                              # 사각틀
+node src/cli.ts gen   --size 6 --rules nonBoxy,inequality,areaNumber --stars 4-6    # 사각틀 금지 + 불평등
+node src/cli.ts gen   --size 6 --rules difference,range --walls                     # 넓이의 차이 (0 = 같은 넓이)
 node src/cli.ts batch --size 6 --rules areaNumber,range --count 30      # 난이도 분포
 node src/cli.ts gen   ... --json out.json && node src/cli.ts solve out.json
 ```

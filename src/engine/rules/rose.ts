@@ -6,13 +6,16 @@ import type { Deduction, Rule } from './rule.ts';
 
 /**
  * Rose Window: every region contains exactly one cell of each symbol kind.
- * (symbolCount = 1 is the Solitude rule.)
+ * (With one symbol kind this is a one-symbol rose window; the Solitude rule,
+ * which counts every cell clue as a symbol, is built on the same class.)
  */
 export class RoseRule implements Rule {
-  readonly kind = 'rose';
+  readonly kind: string = 'rose';
   readonly k: number;
   /** symbol kind per cell, -1 if none */
   readonly symbolOf: Int8Array;
+  /** technique name of the wall between two like symbols */
+  protected wallTechnique = 'same-symbol';
 
   constructor(clue: RoseClue, grid: Grid) {
     this.k = clue.symbolCount;
@@ -40,7 +43,7 @@ export class RoseRule implements Rule {
     for (const comp of state.comps.values()) if (!state.narrow(comp, this.k, comp.hi)) return false;
     for (let e = 0; e < g.edges; e++) {
       const a = this.symbolOf[g.edgeA[e]];
-      if (a >= 0 && a === this.symbolOf[g.edgeB[e]]) out.push({ edge: e, value: WALL, technique: 'same-symbol', tier: 1 });
+      if (a >= 0 && a === this.symbolOf[g.edgeB[e]]) out.push({ edge: e, value: WALL, technique: this.wallTechnique, tier: 1 });
     }
     return true;
   }

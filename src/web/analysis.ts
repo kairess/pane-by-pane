@@ -3,7 +3,8 @@ import { allDeductions } from '../engine/logical.ts';
 import { M } from './i18n.ts';
 import { JOIN, WALL as EWALL, type State } from '../engine/state.ts';
 import { WALL, type PlayerState } from './model.ts';
-import { edgeBetween } from '../engine/grid.ts';
+import { edgeBetween, neighbourInDirection, vertexCells, vertexEdges } from '../engine/grid.ts';
+import { isRectangle } from '../engine/rules/boxy.ts';
 import { canonical, parseKey, regionKey, shapeSize } from '../engine/shape.ts';
 import type { Puzzle } from '../engine/types.ts';
 
@@ -76,8 +77,10 @@ export function stateFromPlayer(engine: Engine, ps: PlayerState): State | null {
  *                  → too big, two different numbers, duplicate rose symbol, two polyominoes
  *   definite regions (a wall region that is exactly one claimed region)
  *                  → exact checks: number, range, bank shape, polyomino, rose set,
- *                    plus pairwise Size Separation / Gemini / Delta between definite neighbours
- *   markers        → paint across a Gemini/Delta marker
+ *                    plus pairwise Size Separation / Gemini / Delta / Inequality / Difference
+ *                    between definite neighbours; Boxy / Non-Boxy shape checks
+ *   solitude       → a wall region without a symbol, a claimed region with two
+ *   markers        → paint across a Gemini/Delta/Inequality/Difference marker
  *   fixed walls    → paint across a wall that belongs to the board (the wall is flagged)
  *
  * Returns the violating cells and edges.
@@ -98,9 +101,20 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Violations {
   let bank: Set<string> | null = null;
   let bankMin = Infinity;
   let bankMax = 0;
-  const markers: { edge: number; same: boolean }[] = [];
+  type Marker = { edge: number; kind: 'gemini' | 'delta' | 'inequality' | 'difference'; larger?: number; value?: number };
+  const markers: Marker[] = [];
   let rose: { k: number; symbolOf: Int8Array } | null = null;
   let sizeSep = false;
+  let solitude = false;
+  let mingle = false;
+  let match = false;
+  let mismatch = false;
+  let bricky = false;
+  let loopy = false;
+  const palisades: { cell: number; sides: number }[] = [];
+  const towers: { x: number; y: number; count: number }[] = [];
+  let boxy = false;
+  let nonBoxy = false;
   for (const c of puzzle.clues) {
     switch (c.type) {
       case 'areaNumber':
@@ -122,7 +136,44 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Violations {
         break;
       case 'gemini':
       case 'delta':
-        markers.push({ edge: edgeBetween(g, c.edge.a, c.edge.b), same: c.type === 'gemini' });
+        markers.push({ edge: edgeBetween(g, c.edge.a, c.edge.b), kind: c.type });
+        break;
+      case 'inequality':
+        markers.push({ edge: edgeBetween(g, c.edge.a, c.edge.b), kind: 'inequality', larger: c.larger === 'a' ? c.edge.a : c.edge.b });
+        break;
+      case 'difference':
+        markers.push({ edge: edgeBetween(g, c.edge.a, c.edge.b), kind: 'difference', value: c.value });
+        break;
+      case 'solitude':
+        solitude = true;
+        break;
+      case 'mingle':
+        mingle = true;
+        break;
+      case 'match':
+        match = true;
+        break;
+      case 'mismatch':
+        mismatch = true;
+        break;
+      case 'bricky':
+        bricky = true;
+        break;
+      case 'loopy':
+        loopy = true;
+        break;
+      case 'palisade':
+        palisades.push({ cell: c.cell, sides: c.sides });
+        break;
+      case 'watchtower':
+        towers.push({ x: c.x, y: c.y, count: c.count });
+        break;
+      case 'boxy':
+        boxy = true;
+        break;
+      case 'nonBoxy':
+        nonBoxy = true;
+        rangeMin = Math.max(rangeMin, 3);
         break;
       case 'rose': {
         const symbolOf = new Int8Array(g.cells).fill(-1);
@@ -137,6 +188,10 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Violations {
   }
   const minSize = Math.max(rangeMin, bank ? bankMin : 1);
   const maxSize = Math.min(rangeMax, bank ? bankMax : Infinity);
+  // Solitude counts every cell clue as a symbol
+  const symbolCells = new Set<number>([...numbers.keys(), ...polys.keys(), ...palisades.map((p) => p.cell)]);
+  if (rose) for (let c = 0; c < g.cells; c++) if (rose.symbolOf[c] >= 0) symbolCells.add(c);
+  const symbolCount = (cells: number[]) => cells.filter((c) => symbolCells.has(c)).length;
 
   const groups = (labels: Int32Array): number[][] => {
     const out: number[][] = [];
@@ -173,6 +228,7 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Violations {
       if (pk !== undefined && (n < shapeSize(pk) || (n === shapeSize(pk) && key !== pk))) v = true;
     }
     if (rose && symbolMask(cells).mask !== (1 << rose.k) - 1) v = true;
+    if (solitude && symbolCount(cells) === 0) v = true;
     if (v) flag(cells);
   }
 
@@ -202,6 +258,7 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Violations {
     }
     if (nums.size > 1 || ps2.size > 1) v = true;
     if (rose && symbolMask(cells).dup) v = true;
+    if (solitude && symbolCount(cells) > 1) v = true;
     if (v) flag(cells);
   }
 
@@ -228,10 +285,13 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Violations {
       const { mask, dup } = symbolMask(cells);
       if (dup || mask !== (1 << rose.k) - 1) v = true;
     }
+    if (solitude && symbolCount(cells) !== 1) v = true;
+    if (boxy && !isRectangle(g.w, cells)) v = true;
+    if (nonBoxy && isRectangle(g.w, cells)) v = true;
     if (v) flag(cells);
   }
   // pairwise between definite neighbours
-  if (sizeSep || markers.length) {
+  if (sizeSep || mingle || markers.length) {
     for (let e = 0; e < g.edges; e++) {
       if (!ps.isWall(e)) continue;
       const la = byWalls[g.edgeA[e]];
@@ -240,16 +300,68 @@ export function findViolations(puzzle: Puzzle, ps: PlayerState): Violations {
       const A = definite.get(la);
       const B = definite.get(lb);
       if (!A || !B) continue;
-      if (sizeSep && A.length === B.length) {
-        flag(A);
-        flag(B);
-      }
+      let bad = sizeSep && A.length === B.length;
+      if (mingle && shapeOf.get(la) === shapeOf.get(lb)) bad = true;
       const m = markers.find((mk) => mk.edge === e);
-      if (m && (shapeOf.get(la) === shapeOf.get(lb)) !== m.same) {
+      if (m) {
+        const sameShape = shapeOf.get(la) === shapeOf.get(lb);
+        if (m.kind === 'gemini' && !sameShape) bad = true;
+        if (m.kind === 'delta' && sameShape) bad = true;
+        if (m.kind === 'inequality') {
+          const big = byWalls[m.larger!] === la ? A : B;
+          const small = big === A ? B : A;
+          if (big.length <= small.length) bad = true;
+        }
+        if (m.kind === 'difference' && Math.abs(A.length - B.length) !== m.value) bad = true;
+      }
+      if (bad) {
         flag(A);
         flag(B);
       }
     }
+  }
+  // match / mismatch among definite regions
+  if ((match || mismatch) && definite.size >= 2) {
+    const entries = [...definite.entries()];
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const same = shapeOf.get(entries[i][0]) === shapeOf.get(entries[j][0]);
+        if ((match && !same) || (mismatch && same)) {
+          flag(entries[i][1]);
+          flag(entries[j][1]);
+        }
+      }
+    }
+  }
+  // palisade: a drawn wall on a side that joins, or paint across a side that is a border
+  for (const p of palisades) {
+    for (let dir = 0; dir < 4; dir++) {
+      const n = neighbourInDirection(g, p.cell, dir);
+      if (n < 0) continue;
+      const e = edgeBetween(g, p.cell, n);
+      const wall = ((p.sides >> dir) & 1) === 1;
+      if (!wall && ps.edge[e] === WALL) bad.add(p.cell);
+      if (wall && ps.paint[p.cell] !== 0 && ps.paint[p.cell] === ps.paint[n]) bad.add(p.cell);
+    }
+  }
+  // bricky: four walls at a vertex; loopy: a wall touching the frame, or a vertex whose edges are all drawn with an odd count
+  if (bricky || loopy) {
+    for (let y = 0; y <= g.h; y++) {
+      for (let x = 0; x <= g.w; x++) {
+        const edges = vertexEdges(g, x, y);
+        if (!edges.length) continue;
+        const walls = edges.filter((e) => ps.isWall(e)).length;
+        const cells = vertexCells(g, x, y).filter((c) => c >= 0);
+        if (bricky && edges.length === 4 && walls === 4) flag(cells);
+        if (loopy && walls % 2 === 1 && (edges.length === 1 || walls === edges.length)) flag(cells);
+      }
+    }
+  }
+  // watchtower: every cell around the vertex definite → exact count
+  for (const t of towers) {
+    const cells = vertexCells(g, t.x, t.y).filter((c) => c >= 0);
+    if (!cells.every((c) => definite.has(byWalls[c]))) continue;
+    if (new Set(cells.map((c) => byWalls[c])).size !== t.count) flag(cells);
   }
   // paint across a marker
   for (const m of markers) {
@@ -328,6 +440,22 @@ function explain(technique: string, value: 'wall' | 'join', A: string, B: string
       return h.markerWall;
     case 'same-symbol':
       return h.sameSymbol;
+    case 'one-symbol':
+      return h.oneSymbol;
+    case 'pocket-count':
+      return h.pocketCount;
+    case 'boxy-fill':
+      return h.boxyFill(A);
+    case 'palisade':
+      return h.palisade;
+    case 'mismatch-count':
+      return h.mismatchCount;
+    case 'bricky':
+      return h.bricky;
+    case 'loopy':
+      return h.loopy;
+    case 'watchtower':
+      return h.watchtower;
     case 'size-full':
       return h.sizeFull(A, n);
     case 'merge-conflict':
@@ -391,7 +519,7 @@ export function nextHint(engine: Engine, ps: PlayerState, solution: ArrayLike<nu
   // the "subject" is the side with more information (a clue, or more cells)
   const clueCells = new Set<number>();
   for (const c of engine.puzzle.clues) {
-    if (c.type === 'areaNumber' || c.type === 'polyomino') clueCells.add(c.cell);
+    if (c.type === 'areaNumber' || c.type === 'polyomino' || c.type === 'palisade') clueCells.add(c.cell);
     if (c.type === 'rose') for (const s of c.symbols) clueCells.add(s.cell);
   }
   const info = (cells: number[]) => cells.filter((c) => clueCells.has(c)).length * 100 + cells.length;

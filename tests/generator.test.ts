@@ -1,16 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { autoSizeBand, generate, pickWalls, sameLabels } from '../src/engine/generator/generate.ts';
-import { growPartition, tilePartition, randomBank, catalogBank, regionsOf, pairPartition, adjacentRegions } from '../src/engine/generator/partition.ts';
+import { autoSizeBand, generate, pickWalls, ruleConflict, sameLabels } from '../src/engine/generator/generate.ts';
+import { growPartition, tilePartition, randomBank, catalogBank, regionsOf, pairPartition, adjacentRegions, tileWithHoles } from '../src/engine/generator/partition.ts';
 import { roseSymbolCells } from '../src/engine/generator/clues.ts';
 import { BANK_CATALOG } from '../src/engine/generator/bankCatalog.ts';
-import { shapeSize } from '../src/engine/shape.ts';
+import { shapeSize, shapeFromName } from '../src/engine/shape.ts';
 import { Rng } from '../src/engine/random.ts';
 import { makeGrid } from '../src/engine/grid.ts';
-import { randomMask, isNice } from '../src/engine/generator/mask.ts';
+import { randomMask, isNice, isConnected, punchToMultiple } from '../src/engine/generator/mask.ts';
 import { solve } from '../src/engine/solver.ts';
 import { createEngine, verify } from '../src/engine/engine.ts';
-import { regionKey } from '../src/engine/shape.ts';
+import { isRectangleKey, regionKey } from '../src/engine/shape.ts';
 import type { RuleKind } from '../src/engine/types.ts';
 
 test('growPartition respects size bounds and covers the grid', () => {
@@ -38,6 +38,11 @@ const combos: { rules: RuleKind[]; min?: number; max?: number }[] = [
   { rules: ['shapeBank', 'delta'], min: 3, max: 5 },
   { rules: ['polyomino', 'range'] },
   { rules: ['rose', 'polyomino'], min: 3, max: 5 },
+  { rules: ['boxy', 'areaNumber'] },
+  { rules: ['nonBoxy', 'range'], min: 3, max: 6 },
+  { rules: ['inequality', 'areaNumber'] },
+  { rules: ['difference', 'areaNumber'] },
+  { rules: ['solitude', 'areaNumber', 'polyomino'] },
 ];
 
 for (const c of combos) {
@@ -261,5 +266,99 @@ test('pairPartition: congruent pairs border each other, the rest is small', () =
   for (const i of big) {
     assert.ok(regions[i].length <= 4);
     assert.ok([...neighbours.get(i)!].some((j) => regions[j].length >= 3 && keys[j] === keys[i]), `region ${i} borders its twin`);
+  }
+});
+
+test('ruleConflict names the combinations that cannot make a puzzle', () => {
+  assert.equal(ruleConflict(['gemini', 'sizeSeparation']), 'gemini-sizeSeparation');
+  assert.equal(ruleConflict(['rose', 'solitude', 'areaNumber']), 'rose-solitude');
+  assert.equal(ruleConflict(['boxy', 'nonBoxy', 'areaNumber']), 'boxy-nonBoxy');
+  assert.equal(ruleConflict(['solitude', 'range']), 'solitude-needs-symbols');
+  assert.equal(ruleConflict(['boxy']), 'boxy-needs-size');
+  assert.equal(ruleConflict(['boxy', 'delta', 'inequality']), 'boxy-needs-size');
+  assert.equal(ruleConflict(['boxy', 'range']), null);
+  assert.equal(ruleConflict(['solitude', 'polyomino']), null);
+  assert.throws(() => generate({ width: 4, height: 4, rules: ['boxy'], seed: 1, attempts: 1 }));
+});
+
+test('solitude puzzles carry exactly one symbol per region and keep every symbol', () => {
+  const r = generate({ width: 6, height: 6, rules: ['solitude', 'areaNumber'], seed: 5, attempts: 40 });
+  assert.ok(r);
+  const regions = regionsOf(r.solution);
+  const symbols = r.puzzle.clues.filter((c) => c.type === 'areaNumber' || c.type === 'polyomino');
+  assert.equal(symbols.length, regions.length);
+  for (const reg of regions) assert.equal(symbols.filter((c) => 'cell' in c && reg.includes(c.cell)).length, 1);
+});
+
+test('boxy puzzles have rectangular regions and non-boxy puzzles none', () => {
+  const b = generate({ width: 6, height: 6, rules: ['boxy', 'range'], seed: 2, attempts: 40, walls: true });
+  assert.ok(b);
+  for (const reg of regionsOf(b.solution)) assert.ok(isRectangleKey(regionKey(6, reg)));
+  const n = generate({ width: 6, height: 6, rules: ['nonBoxy', 'areaNumber'], seed: 2, attempts: 40 });
+  assert.ok(n);
+  for (const reg of regionsOf(n.solution)) assert.ok(!isRectangleKey(regionKey(6, reg)) && reg.length >= 3);
+});
+
+test('precision on a masked board: the outline is cut to a multiple of the region size', () => {
+  const rng = new Rng(3);
+  for (const n of [4, 5, 7]) {
+    const holes = punchToMultiple(9, 9, [], n, rng);
+    assert.ok(holes);
+    assert.equal((81 - holes.length) % n, 0);
+    const active = new Uint8Array(81).fill(1);
+    for (const c of holes) active[c] = 0;
+    assert.ok(isNice(9, 9, active));
+  }
+  const r = generate({ width: 9, height: 9, rules: ['range'], minSize: 5, maxSize: 5, mask: 'symmetric', walls: true, seed: 1, attempts: 20 });
+  assert.ok(r, 'a 9x9 Precision 5 window');
+  for (const reg of regionsOf(r.solution)) assert.equal(reg.length, 5);
+});
+
+test('shape bank on a big outline: cells the bank cannot cover are left out', () => {
+  const rng = new Rng(5);
+  const bank = [shapeFromName('P5'), shapeFromName('X5')];
+  const t = tileWithHoles(makeGrid(9, 9), bank, rng, 20);
+  assert.ok(t);
+  assert.ok(t.holes.length > 0 && t.holes.length <= 20);
+  for (const reg of regionsOf(t.labels)) assert.ok(bank.includes(regionKey(9, reg)));
+  const active = new Uint8Array(81).fill(1);
+  for (const c of t.holes) active[c] = 0;
+  assert.ok(isConnected(9, 9, active));
+});
+
+test('twin markers on a large board: the partition seeds bordering twins', () => {
+  const r = generate({ width: 9, height: 9, rules: ['areaNumber', 'gemini', 'delta'], seed: 1, attempts: 12, stars: [1, 7] });
+  assert.ok(r);
+  assert.ok(r.puzzle.clues.some((c) => c.type === 'gemini'));
+});
+
+test('big rose: four or more symbols make a few large regions', () => {
+  const r = generate({ width: 6, height: 9, rules: ['rose'], roseSymbols: 5, seed: 2, attempts: 20, walls: true });
+  assert.ok(r);
+  const regions = regionsOf(r.solution);
+  assert.ok(regions.length <= 6);
+  for (const reg of regions) assert.ok(reg.length >= 10);
+});
+
+test('generate: the rules of the original\'s later windows', () => {
+  const cases: { rules: RuleKind[]; extra?: object }[] = [
+    { rules: ['match', 'rose'] },
+    { rules: ['match', 'range'], extra: { minSize: 4, maxSize: 4 } },
+    { rules: ['mismatch'] },
+    { rules: ['palisade', 'range'], extra: { minSize: 4, maxSize: 4 } },
+    { rules: ['palisade', 'solitude'] },
+    { rules: ['bricky', 'areaNumber'] },
+    { rules: ['loopy', 'areaNumber'] },
+    { rules: ['watchtower', 'areaNumber'] },
+  ];
+  for (const c of cases) {
+    const r = generate({ width: 6, height: 6, rules: c.rules, seed: 3, attempts: 40, mask: 'symmetric', walls: true, ...(c.extra ?? {}) });
+    assert.ok(r, `${c.rules.join('+')}: no puzzle`);
+    const engine = createEngine(r.puzzle);
+    assert.ok(verify(engine, r.solution));
+    const s = solve(engine, { limit: 2 });
+    assert.equal(s.solutions.length, 1, `${c.rules.join('+')}: unique`);
+    assert.ok(sameLabels(s.solutions[0], r.solution));
+    for (const k of c.rules) assert.ok(r.puzzle.clues.some((cl) => cl.type === k), `${c.rules.join('+')}: ${k} present`);
   }
 });

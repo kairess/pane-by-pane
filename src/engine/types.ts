@@ -14,7 +14,19 @@ export type RuleKind =
   | 'gemini'
   | 'delta'
   | 'rose'
-  | 'sizeSeparation';
+  | 'sizeSeparation'
+  | 'solitude'
+  | 'boxy'
+  | 'nonBoxy'
+  | 'inequality'
+  | 'difference'
+  | 'mingle'
+  | 'match'
+  | 'mismatch'
+  | 'palisade'
+  | 'bricky'
+  | 'loopy'
+  | 'watchtower';
 
 export const RULE_KINDS: readonly RuleKind[] = [
   'areaNumber',
@@ -25,6 +37,18 @@ export const RULE_KINDS: readonly RuleKind[] = [
   'delta',
   'rose',
   'sizeSeparation',
+  'solitude',
+  'boxy',
+  'nonBoxy',
+  'inequality',
+  'difference',
+  'mingle',
+  'match',
+  'mismatch',
+  'palisade',
+  'bricky',
+  'loopy',
+  'watchtower',
 ];
 
 export interface EdgeRef {
@@ -76,8 +100,9 @@ export interface DeltaClue {
 
 /**
  * Rose Window: `symbolCount` symbol kinds (0..k-1) are placed on cells; every
- * region must contain exactly one cell of each kind. With symbolCount = 1 this
- * is the "Solitude" rule.
+ * region must contain exactly one cell of each kind. (symbolCount = 1 is a
+ * one-symbol rose window, which the original also has; its "Solitude" rule is
+ * the separate `solitude` clue below.)
  */
 export interface RoseClue {
   type: 'rose';
@@ -90,6 +115,93 @@ export interface SizeSeparationClue {
   type: 'sizeSeparation';
 }
 
+/**
+ * Solitude: every region contains exactly one symbol, counting every cell clue
+ * of the puzzle (area numbers, polyomino tiles, rose symbols) as a symbol. As
+ * in the original it never stands alone: the symbols come from other rules.
+ */
+export interface SolitudeClue {
+  type: 'solitude';
+}
+
+/** Boxy: every region is a rectangle. */
+export interface BoxyClue {
+  type: 'boxy';
+}
+
+/** Non-Boxy: no region is a rectangle (so every region has at least three cells). */
+export interface NonBoxyClue {
+  type: 'nonBoxy';
+}
+
+/**
+ * Inequality: the edge is a border, and the region on the `larger` side
+ * (`'a'` = the region containing edge.a) has strictly more cells than the other.
+ */
+export interface InequalityClue {
+  type: 'inequality';
+  edge: EdgeRef;
+  larger: 'a' | 'b';
+}
+
+/** Mingle Shape: regions that share a border have different shapes (Delta everywhere). */
+export interface MingleClue {
+  type: 'mingle';
+}
+
+/** Match: every region has the same shape. */
+export interface MatchClue {
+  type: 'match';
+}
+
+/** Mismatch: no two regions have the same shape. */
+export interface MismatchClue {
+  type: 'mismatch';
+}
+
+/**
+ * Palisade: the four sides of `cell` are borders exactly where `sides` has a
+ * bit set (N = 1, E = 2, S = 4, W = 8). A side on the board's edge or on a
+ * hole is a border, so those bits are always set.
+ */
+export interface PalisadeClue {
+  type: 'palisade';
+  cell: number;
+  sides: number;
+}
+
+/** Bricky: no grid vertex has borders on all four of its edges. */
+export interface BrickyClue {
+  type: 'bricky';
+}
+
+/**
+ * Loopy: at every grid vertex an even number of its edges are borders (0, 2
+ * or 4), so borders never end or branch; a border cannot reach the frame,
+ * which makes every region an island inside another.
+ */
+export interface LoopyClue {
+  type: 'loopy';
+}
+
+/**
+ * Watchtower: the grid vertex at (`x`, `y`) — corner coordinates, 0..width
+ * and 0..height — touches exactly `count` different regions.
+ */
+export interface WatchtowerClue {
+  type: 'watchtower';
+  x: number;
+  y: number;
+  count: number;
+}
+
+/** Difference: the edge is a border, and the two regions' areas differ by exactly `value` (0 = equal). */
+export interface DifferenceClue {
+  type: 'difference';
+  edge: EdgeRef;
+  value: number;
+}
+
 export type Clue =
   | AreaNumberClue
   | RangeClue
@@ -98,7 +210,19 @@ export type Clue =
   | GeminiClue
   | DeltaClue
   | RoseClue
-  | SizeSeparationClue;
+  | SizeSeparationClue
+  | SolitudeClue
+  | BoxyClue
+  | NonBoxyClue
+  | InequalityClue
+  | DifferenceClue
+  | MingleClue
+  | MatchClue
+  | MismatchClue
+  | PalisadeClue
+  | BrickyClue
+  | LoopyClue
+  | WatchtowerClue;
 
 export interface Puzzle {
   width: number;

@@ -84,3 +84,43 @@ test('a region that grows into a same-hue neighbour is recoloured', () => {
     assert.notEqual(ps.hue[a], ps.hue[b]);
   }
 });
+
+test('solitude, boxy and area-marker violations', () => {
+  // solitude: a walled region without a symbol, paint joining two symbols
+  const sol: Puzzle = { width: 4, height: 1, clues: [{ type: 'solitude' }, { type: 'areaNumber', cell: 0, value: 2 }, { type: 'areaNumber', cell: 3, value: 2 }] };
+  const ps = new PlayerState(sol);
+  enclose(ps, [1]); // cell 1 alone holds no symbol
+  assert.deepEqual([...findViolations(sol, ps).cells].sort(), [0, 1], 'cell 1 holds no symbol; cell 0 is walled in below its number');
+  const ps2 = new PlayerState(sol);
+  const id = ps2.newRegion(0);
+  for (const c of [1, 2, 3]) ps2.extend(c, id); // two symbols in one paint region
+  assert.equal(findViolations(sol, ps2).cells.size, 4);
+  // boxy: a definite L-shaped region is flagged; non-boxy flags a definite rectangle and any walled region under three cells
+  const boxy: Puzzle = { width: 3, height: 2, clues: [{ type: 'boxy' }] };
+  const ps3 = new PlayerState(boxy);
+  enclose(ps3, [0, 1, 3]);
+  const l = ps3.newRegion(0);
+  ps3.extend(1, l);
+  ps3.extend(3, l);
+  assert.deepEqual([...findViolations(boxy, ps3).cells].sort(), [0, 1, 3]);
+  const nonBoxy: Puzzle = { width: 3, height: 2, clues: [{ type: 'nonBoxy' }] };
+  const ps4 = new PlayerState(nonBoxy);
+  enclose(ps4, [0, 1]);
+  assert.deepEqual([...findViolations(nonBoxy, ps4).cells].sort(), [0, 1]);
+  // inequality / difference between two definite regions
+  const ineq: Puzzle = { width: 4, height: 1, clues: [{ type: 'inequality', edge: { a: 1, b: 2 }, larger: 'a' }, { type: 'difference', edge: { a: 2, b: 3 }, value: 1 }] };
+  const ps5 = new PlayerState(ineq);
+  for (const cells of [[0, 1], [2], [3]]) {
+    enclose(ps5, cells);
+    const r = ps5.newRegion(cells[0]);
+    for (const c of cells.slice(1)) ps5.extend(c, r);
+  }
+  assert.equal(findViolations(ineq, ps5).cells.size, 2, 'cells 2 and 3 have equal areas but a difference of 1 is marked');
+  const ps6 = new PlayerState(ineq);
+  for (const cells of [[0], [1], [2, 3]]) {
+    enclose(ps6, cells);
+    const r = ps6.newRegion(cells[0]);
+    for (const c of cells.slice(1)) ps6.extend(c, r);
+  }
+  assert.deepEqual([...findViolations(ineq, ps6).cells].sort(), [1, 2, 3], 'the left side of the sign is not larger');
+});

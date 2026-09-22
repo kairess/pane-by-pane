@@ -38,4 +38,19 @@ export interface Rule {
 
   /** Final check of a complete partition. */
   check(grid: Grid, labels: Labels, regions: number[][]): boolean;
+
+  /**
+   * Areas any region of the puzzle may have, when the rule bounds them for
+   * every region at once (Range, Shape Bank, Non-Boxy). The core propagator
+   * intersects these to tell whether a pocket of cells can be filled by whole
+   * regions (see `pocket-count`).
+   */
+  regionSizes?(): RegionSizes;
+}
+
+export interface RegionSizes {
+  lo?: number;
+  hi?: number;
+  /** an explicit set of allowed areas (Shape Bank) */
+  sizes?: number[];
 }

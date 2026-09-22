@@ -6,8 +6,9 @@ import type { ShapeKey } from '../shape.ts';
 import { solve } from '../solver.ts';
 import type { Clue, EdgeRef, Labels, Puzzle, RuleKind } from '../types.ts';
 import { deriveClueUnits, flatten, type ClueUnit } from './clues.ts';
-import { isNice, randomMask, type Symmetry } from './mask.ts';
-import { catalogBank, growPartition, pairPartition, relabel, tilePartition } from './partition.ts';
+import { isNice, punchToAtMost, punchToMultiple, randomMask, type Symmetry } from './mask.ts';
+import { catalogBank, exactPartition, growPartition, loopyPartition, mismatchPartition, pairPartition, rectangleBank, relabel, tilePartition, tileWithHoles } from './partition.ts';
+import { allPolyominoes, shapeSize } from '../shape.ts';
 
 /**
  * Solution-first pipeline (docs/IDEA.md §3):
@@ -44,7 +45,7 @@ export interface GenerateOptions {
   bankShapeSizes?: [number, number];
   /** Shape Bank: number of decoy shapes added to the bank */
   bankDecoys?: number;
-  /** Rose: symbol kinds (1 = Solitude) */
+  /** Rose: symbol kinds (1 = a one-symbol rose window) */
   roseSymbols?: number;
   /** board shape: 'rect' (default) or 'symmetric' (holes: mirror-symmetric base + a few asymmetric tweaks) */
   mask?: 'rect' | 'symmetric';
@@ -72,6 +73,8 @@ export interface GenerateOptions {
   polyominoesPerRegion?: number;
   /** Gemini/Delta: max marker candidates per bordering pair (default 2) */
   markersPerPair?: number;
+  /** Palisade: max tile candidates per region (default: every cell, like numbers) */
+  palisadesPerRegion?: number;
   /** star rating range to accept (1..7) */
   stars?: [number, number];
   /**
@@ -132,7 +135,38 @@ export interface GeneratedPuzzle {
  *  uniqueness cannot be settled quickly is treated as not unique. */
 const GEN_NODE_LIMIT = 30_000;
 
+/**
+ * Rule combinations that cannot make a puzzle. Callers (the web form, the CLI)
+ * show the reason; `generate` throws on them.
+ */
+export type RuleConflict = 'gemini-sizeSeparation' | 'rose-solitude' | 'boxy-nonBoxy' | 'solitude-needs-symbols' | 'boxy-needs-size' | 'gemini-mingle' | 'match-mismatch' | 'match-shapes' | 'mismatch-gemini' | 'loopy-needs-size';
+
+export function ruleConflict(rules: readonly RuleKind[]): RuleConflict | null {
+  const has = (k: RuleKind) => rules.includes(k);
+  // Twin regions have the same shape, hence the same area: size separation forbids exactly that.
+  if (has('gemini') && has('sizeSeparation')) return 'gemini-sizeSeparation';
+  // Solitude counts every symbol; a rose window wants several per region.
+  if (has('rose') && has('solitude')) return 'rose-solitude';
+  // Mingle forbids same-shaped neighbours, which is what a twin marker asserts.
+  if (has('gemini') && has('mingle')) return 'gemini-mingle';
+  if (has('match') && has('mismatch')) return 'match-mismatch';
+  // Match makes every region the same shape and size: nothing may ask for different ones.
+  if (has('match') && (has('mingle') || has('delta') || has('sizeSeparation') || has('inequality') || has('nonBoxy'))) return 'match-shapes';
+  if (has('mismatch') && has('gemini')) return 'mismatch-gemini';
+  // Loopy islands are pinned only by what bounds their area or shape.
+  if (has('loopy') && !['areaNumber', 'range', 'shapeBank', 'polyomino', 'rose', 'solitude', 'palisade', 'match', 'boxy'].some((k) => has(k as RuleKind))) return 'loopy-needs-size';
+  if (has('boxy') && has('nonBoxy')) return 'boxy-nonBoxy';
+  // The symbols Solitude counts come from other rules (as in the original, it never stands alone).
+  if (has('solitude') && !has('areaNumber') && !has('polyomino') && !has('palisade')) return 'solitude-needs-symbols';
+  // A rectangle can always be cut into two rectangles, so Boxy needs a rule
+  // that bounds regions from below (markers alone never do).
+  if (has('boxy') && !['areaNumber', 'range', 'shapeBank', 'polyomino', 'rose', 'solitude', 'mismatch', 'palisade', 'watchtower'].some((k) => has(k as RuleKind))) return 'boxy-needs-size';
+  return null;
+}
+
 export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
+  const conflict = ruleConflict(opt.rules);
+  if (conflict) throw new Error(`rules cannot be combined: ${conflict}`);
   const seed = opt.seed ?? Math.floor(Math.random() * 0xffffffff);
   const rng = new Rng(seed);
   const rect = makeGrid(opt.width, opt.height);
@@ -141,12 +175,26 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
   const [starLo, starHi] = opt.stars ?? [1, 7];
   const useBank = opt.rules.includes('shapeBank');
   const sizeSep = opt.rules.includes('sizeSeparation');
+  const boxy = opt.rules.includes('boxy');
+  const mingle = opt.rules.includes('mingle');
+  const match = opt.rules.includes('match');
+  const bricky = opt.rules.includes('bricky');
+  const loopy = opt.rules.includes('loopy');
+  // Palisade tiles outline their cell's sides, which pins regions like numbers do.
+  const palisade = opt.rules.includes('palisade');
+  const nonBoxy = opt.rules.includes('nonBoxy');
+  const mismatch = opt.rules.includes('mismatch');
   // Rose: every region holds one of each symbol kind, so regions need at least that many cells.
   const roseK = opt.rules.includes('rose') ? Math.max(1, opt.roseSymbols ?? 2) : 0;
   // Rose on its own (or with markers / size separation, which only constrain
   // regions something else outlines): the symbols must pin every region by
   // themselves, which needs small, path-like regions (see roseSymbolCells).
-  const outlining = opt.rules.some((r) => r === 'areaNumber' || r === 'shapeBank' || r === 'polyomino');
+  // Solitude allows one symbol per region, too few for the numbers or tiles to
+  // outline the regions by themselves: it goes through wall mode, as its
+  // windows in the original lean on Palisade tiles and leads.
+  const solitude = opt.rules.includes('solitude');
+  // Mismatch pins regions by using up the small shapes (see mismatchPartition), which needs the walls to carry the rest.
+  const outlining = !solitude && !mismatch && opt.rules.some((r) => r === 'areaNumber' || r === 'shapeBank' || r === 'polyomino' || r === 'palisade' || r === 'match');
   const roseOnly = roseK >= 2 && !outlining;
   // Range, twin/unlike markers, size separation and rose cannot outline
   // regions by themselves. Like the original's lead lines, the board's fixed
@@ -158,6 +206,13 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
   const wallMode = !outlining;
   const [autoLo, autoHi] = autoSizeBand(opt.width, opt.height, starLo, starHi);
   const explicitSize = opt.minSize !== undefined || opt.maxSize !== undefined;
+  /** Precision: every region has exactly this many cells */
+  const precisionN = opt.rules.includes('range') && opt.minSize !== undefined && opt.minSize === opt.maxSize ? opt.minSize : undefined;
+  // Rose with four or more symbols and nothing else: the original's hard rose
+  // windows are a few large regions (two to five times the symbol count)
+  // pinned by the symbols and the leads, not the small path-like regions the
+  // tip placement needs. Symbols go on random cells and the walls carry it.
+  const bigRose = roseOnly && roseK >= 4 && !explicitSize;
   // Markers only (twin / unlike / size separation, with no area rule): nothing
   // bounds a region from below, so a region can always be cut in two unless a
   // marker forbids it. As in the original's marker windows, the regions are
@@ -165,7 +220,8 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
   // measured on masked boards, "all walls + all markers" pins the solution for
   // about half of the partitions with regions of 1-3 cells, a tenth with 1-4,
   // and never with 1-5.
-  const markerOnly = wallMode && !opt.rules.includes('range') && roseK === 0;
+  // (Boxy / Non-Boxy shape the regions themselves and keep the normal sizes.)
+  const markerOnly = wallMode && !opt.rules.includes('range') && roseK === 0 && !boxy && !nonBoxy && !solitude && !mismatch && !loopy && !bricky;
   // Twin markers asked for high stars: small regions settle every what-if in
   // a couple of cells and top out around 5★. Building the partition around
   // bordering pairs of congruent 3-4-cell shapes (twins the solver has to
@@ -179,8 +235,14 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
   // Partitions whose bordering regions all differ in area are unique almost
   // every time, but they are a visible trait, so the generator only switches
   // to them after the free partitions have failed twice in a row.
-  const numbersOutline = opt.rules.includes('areaNumber') && !useBank && !opt.rules.includes('polyomino');
+  const numbersOutline = opt.rules.includes('areaNumber') && !useBank && !opt.rules.includes('polyomino') && !solitude;
   let distinctSizes = false;
+  // Non-Boxy with only the walls to pin the regions: a non-rectangle of at
+  // most five cells cannot be cut into two pieces of three or more, so small
+  // regions are pinned by construction; larger ones give more difficult
+  // windows when they happen to be pinned, so they are tried first.
+  const nonBoxyOnly = nonBoxy && wallMode && !opt.rules.includes('range') && roseK === 0 && !explicitSize;
+  let smallNonBoxy = false;
   let notUniqueRun = 0;
   /** region size bounds for the next solution */
   const sizeBand = (): [number, number] => {
@@ -195,7 +257,21 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
       lo = Math.min(lo, Math.max(2, Math.floor(g.activeCount / 4)));
       if (hi < lo + 2) hi = lo + 2;
     }
-    if (roseOnly) {
+    // No region of one or two cells escapes being a rectangle. With nothing
+    // else bounding areas (walls carry the puzzle), regions stay at 3-5 cells:
+    // a non-rectangle of at most five cells cannot be cut into two pieces of
+    // three or more, so the walls alone pin it, while larger regions can.
+    if (nonBoxy) {
+      lo = Math.max(lo, 3);
+      if (smallNonBoxy) hi = Math.min(hi, 5);
+      hi = Math.max(hi, lo + 1);
+    }
+    if (bigRose) {
+      const sizeHi = Math.max(roseK + 2, Math.min(5 * roseK, Math.floor(g.activeCount / 3)));
+      return [Math.min(2 * roseK, sizeHi - 1), sizeHi];
+    }
+    if (roseOnly && mismatch) return [Math.max(2, roseK), Math.max(roseK + 2, 7)];
+    if (roseOnly && !boxy) {
       // Rose-only regions are small by construction: at most k+2 cells (k+3
       // with size separation), and from k cells up unless the caller says
       // otherwise: a region with more tips than symbols cannot be pinned by
@@ -307,22 +383,116 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
       order = 0;
       // ① board + solution
       g = opt.mask === 'symmetric' ? makeGrid(rect.w, rect.h, randomMask(rect.w, rect.h, rng, { ratio: opt.holeRatio, symmetry: opt.symmetry, asymmetry: opt.asymmetry })) : rect;
-      let solution: Labels | null;
+      let solution: Labels | null = null;
       let decoys: ShapeKey[] = [];
+      let bank: ShapeKey[] = [];
+      if (useBank) {
+        const rectangles = boxy ? true : nonBoxy ? false : undefined;
+        const sizes = { minSize: Math.max(opt.bankShapeSizes?.[0] ?? 1, roseK, nonBoxy ? 3 : 1), maxSize: opt.bankShapeSizes?.[1], rectangles };
+        // Mingle needs at least two shapes to alternate between
+        bank = catalogBank(rng, { count: opt.bankSize ?? (mingle ? 2 + rng.int(2) : undefined), ...sizes });
+        if (opt.bankDecoys) decoys = catalogBank(rng, { count: opt.bankDecoys, ...sizes, exclude: bank });
+      }
+      // Every region the same size (Precision), or bank shapes whose sizes
+      // share a factor: the board's cell count must be a multiple of it. The
+      // original cuts its boards to size; so do we, from the outside in.
+      const unit = precisionN ?? (useBank ? bank.map(shapeSize).reduce(gcd) : 1);
+      // Match: every region one shape, so one shape from the catalogue tiles the board
+      if (match && !useBank) {
+        bank = catalogBank(rng, { count: 1, minSize: Math.max(2, roseK, precisionN ?? opt.minSize ?? 3), maxSize: precisionN ?? opt.maxSize ?? 6 });
+      }
+      if (mismatch && precisionN !== undefined) {
+        const maxCells = allPolyominoes(precisionN).length * precisionN;
+        if (g.activeCount > maxCells) {
+          const holes = punchToAtMost(g.w, g.h, g.holes, maxCells, precisionN, rng);
+          if (!holes) {
+            report('no-partition');
+            continue;
+          }
+          g = makeGrid(g.w, g.h, holes);
+        }
+      }
+      if (unit > 1 && g.activeCount % unit !== 0) {
+        const holes = punchToMultiple(g.w, g.h, g.holes, unit, rng);
+        if (!holes) {
+          report('no-partition');
+          continue;
+        }
+        g = makeGrid(g.w, g.h, holes);
+      }
+      const matchUnit = match && !useBank && bank.length ? shapeSize(bank[0]) : 1;
+      if (matchUnit > 1 && g.activeCount % matchUnit !== 0) {
+        const holes = punchToMultiple(g.w, g.h, g.holes, matchUnit, rng);
+        if (!holes) {
+          report('no-partition');
+          continue;
+        }
+        g = makeGrid(g.w, g.h, holes);
+      }
       if (opt.partition) solution = opt.partition(g, rng);
-      else if (twinPairs) {
+      else if (match && !useBank) {
+        solution = tilePartition(g, bank, rng, { noCross: bricky });
+        if (!solution && opt.mask === 'symmetric') {
+          const t = tileWithHoles(g, bank, rng, Math.ceil(g.activeCount * 0.2));
+          if (t) {
+            g = makeGrid(g.w, g.h, [...g.holes, ...t.holes]);
+            solution = t.labels;
+          }
+        }
+      } else if (loopy) {
+        const [sizeLo, sizeHi] = sizeBand();
+        solution = loopyPartition(g, rng, { minSize: sizeLo, maxSize: sizeHi });
+      } else if (mismatch && wallMode && !explicitSize && !boxy && roseK === 0) {
+        // Mismatch with only the walls to pin it: use up every small shape so no region can be cut
+        solution = mismatchPartition(g, rng);
+      } else if (twinPairs) {
         // pairs of 3-4 cells over about three quarters of the board, the rest in 1-2-cell regions
         const pairs = Math.max(2, Math.ceil((0.75 * g.activeCount) / 7));
         solution = pairPartition(g, rng, { pairs, sizeLo: 3, sizeHi: 4, restLo: 1, restHi: 2 });
+      } else if (mingle && markerOnly) {
+        // Mingle alone: the original's boards mix single cells, dominoes and
+        // small shapes (0157: 26 regions of 1-4 cells on 54). Only regions that
+        // small are pinned by the walls under Mingle (a bigger one splits into
+        // two different shapes), yet a random partition of them has many
+        // same-shape neighbours, so this rarely succeeds beyond 6x6.
+        solution = growPartition(g, rng, { minSize: 1, maxSize: 3 + rng.int(2), distinctNeighbours: true }, 600);
       } else if (useBank) {
-        const sizes = { minSize: Math.max(opt.bankShapeSizes?.[0] ?? 1, roseK), maxSize: opt.bankShapeSizes?.[1] };
-        const bank = catalogBank(rng, { count: opt.bankSize, ...sizes });
-        solution = tilePartition(g, bank, rng, { sizeSeparation: sizeSep });
-        if (opt.bankDecoys) decoys = catalogBank(rng, { count: opt.bankDecoys, ...sizes, exclude: bank });
+        solution = tilePartition(g, bank, rng, { sizeSeparation: sizeSep, distinctNeighbours: mingle, distinctShapes: mismatch, noCross: bricky });
+        // The bank does not tile this outline: tile the board and leave the
+        // uncovered cells out, as the original's big bank boards do.
+        if (!solution && opt.mask === 'symmetric' && !sizeSep && !mismatch) {
+          const t = tileWithHoles(g, bank, rng, Math.ceil(g.activeCount * 0.2), 40000, { distinctNeighbours: mingle });
+          if (t) {
+            g = makeGrid(g.w, g.h, [...g.holes, ...t.holes]);
+            solution = t.labels;
+          }
+        }
+      } else if (boxy) {
+        // Boxy: tile with every rectangle of the size band
+        const [sizeLo, sizeHi] = sizeBand();
+        const rects = rectangleBank(mismatch ? 1 : sizeLo, mismatch ? Math.max(sizeHi, 12) : sizeHi);
+        solution = tilePartition(g, rects, rng, { sizeSeparation: sizeSep || distinctSizes, distinctShapes: mismatch, noCross: bricky });
+        if (!solution && opt.mask === 'symmetric' && !mismatch && !sizeSep) {
+          const t = tileWithHoles(g, rects, rng, Math.ceil(g.activeCount * 0.2));
+          if (t) {
+            g = makeGrid(g.w, g.h, [...g.holes, ...t.holes]);
+            solution = t.labels;
+          }
+        }
       } else {
         const [sizeLo, sizeHi] = sizeBand();
-        const grow = (lo: number, hi: number) => growPartition(g, rng, { minSize: lo, maxSize: hi, sizeSeparation: sizeSep || distinctSizes, maxTips: roseOnly ? roseK : undefined });
-        solution = grow(sizeLo, sizeHi);
+        const growOpts = { sizeSeparation: sizeSep || distinctSizes, distinctNeighbours: mingle, distinctShapes: mismatch, noCross: bricky, maxTips: roseOnly && !bigRose && !mismatch ? roseK : undefined, noRectangles: nonBoxy };
+        const grow = (lo: number, hi: number) => growPartition(g, rng, { ...growOpts, minSize: lo, maxSize: hi });
+        // Twin markers were asked for: a random partition of larger regions
+        // rarely repeats a shape next to itself, so seed a few bordering pairs
+        // of one shape first and grow the rest around them.
+        if (precisionN !== undefined) {
+          // every region the same size: an exact tiling, not growth
+          solution = exactPartition(g, precisionN, rng, growOpts);
+        } else if (opt.rules.includes('gemini') && !roseOnly) {
+          solution = pairPartition(g, rng, { pairs: 2 + rng.int(2), minPairs: 1, sizeLo, sizeHi, restLo: sizeLo, restHi: sizeHi, rest: growOpts });
+        }
+        solution ??= grow(sizeLo, sizeHi);
         // Distinct areas everywhere need more sizes to choose from than a
         // narrow band offers: widen it a little before giving up.
         if (!solution && distinctSizes && !explicitSize) solution = grow(sizeLo, sizeHi + 1) ?? grow(Math.max(3, roseK, sizeLo - 1), sizeHi + 2);
@@ -339,11 +509,13 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
         deriveClueUnits(g, solution!, rng, {
           rules: opt.rules,
           roseSymbols: opt.roseSymbols,
-          roseForced: roseOnly,
+          // rectangles cannot be cut without leaving a piece short of symbols, so Boxy needs no tip placement
+          roseForced: roseOnly && !bigRose && !boxy && !mismatch,
           bankDecoys: decoys,
           numbersPerRegion: opt.numbersPerRegion,
           polyominoesPerRegion: opt.polyominoesPerRegion,
           markersPerPair: opt.markersPerPair,
+          palisadesPerRegion: opt.palisadesPerRegion,
         });
       let units = derive();
       // Every rule the puzzle was asked for must be derivable from this solution
@@ -362,7 +534,7 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
       // Cell clues share out the cells (one symbol each), so which cells the rose
       // symbols land on decides how much the numbers can say. Re-deal a few times
       // before giving up on this solution.
-      const hasCellClues = opt.rules.some((r) => r === 'areaNumber' || r === 'polyomino');
+      const hasCellClues = opt.rules.some((r) => r === 'areaNumber' || r === 'polyomino' || r === 'palisade');
       for (let redeal = 0; !pinned && roseK > 0 && hasCellClues && redeal < 8; redeal++) {
         units = derive();
         full = mkPuzzle(flatten(units));
@@ -382,7 +554,10 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
       }
       if (!pinned) {
         report('not-unique');
-        if (numbersOutline && ++notUniqueRun >= 2) distinctSizes = true;
+        notUniqueRun++;
+        if (numbersOutline && notUniqueRun >= 2) distinctSizes = true;
+        // (an unpinned partition costs almost nothing here, so larger regions get a fair run first)
+        if (nonBoxyOnly && notUniqueRun >= 16) smallNonBoxy = true;
         continue;
       }
       notUniqueRun = 0;
@@ -465,6 +640,11 @@ export function autoSizeBand(width: number, height: number, starLo: number, star
     hi -= 1;
   }
   return [lo, hi];
+}
+
+function gcd(a: number, b: number): number {
+  while (b) [a, b] = [b, a % b];
+  return a;
 }
 
 /** Every border of a solution as fixed walls (the starting point of wall mode). */
@@ -580,7 +760,7 @@ export function sameLabels(a: Labels, b: Labels): boolean {
   return new Set(map.values()).size === map.size;
 }
 
-const isGlobal = (u: ClueUnit) => u.clues.length !== 1 || !('cell' in u.clues[0] || 'edge' in u.clues[0]);
+const isGlobal = (u: ClueUnit) => u.clues.length !== 1 || !('cell' in u.clues[0] || 'edge' in u.clues[0] || 'x' in u.clues[0]);
 
 /**
  * Greedy clue removal. Local clues (cells, markers) go first, in chunks —

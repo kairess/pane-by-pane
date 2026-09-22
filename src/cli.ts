@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
-import { generate, type GenerateOptions } from './engine/generator/generate.ts';
+import { generate, ruleConflict, type GenerateOptions } from './engine/generator/generate.ts';
 import { solveLogically, TIER_NAMES } from './engine/logical.ts';
 import { render, renderLabels } from './engine/render.ts';
 import { shapeName } from './engine/shape.ts';
@@ -21,7 +21,7 @@ options (gen/batch):
                       with shapeBank: filters catalogue shapes by cell count; default = whole catalogue)
   --bank 2            shape bank size (default: original game's 1-3 distribution)
   --decoys 1          extra unused shapes in the bank
-  --rose 2            rose symbol kinds (1 = Solitude)
+  --rose 2            rose symbol kinds (1 = a one-symbol rose window)
   --stars 2-5         accepted star range (1..7)
   --mask              irregular symmetric board (holes); --holes 0.15 fixes the fraction
   --symmetry lr|tb|both
@@ -58,6 +58,8 @@ function genOptions(flags: Record<string, string | true>): GenerateOptions {
   const size = num('size', 6);
   const rules = (typeof flags.rules === 'string' ? flags.rules.split(',') : ['areaNumber', 'gemini', 'delta']) as RuleKind[];
   for (const r of rules) if (!RULE_KINDS.includes(r)) throw new Error(`unknown rule "${r}" (known: ${RULE_KINDS.join(', ')})`);
+  const conflict = ruleConflict(rules);
+  if (conflict) throw new Error(`these rules cannot be combined (${conflict})`);
   let stars: [number, number] | undefined;
   if (typeof flags.stars === 'string') {
     const [a, b] = flags.stars.split('-').map(Number);

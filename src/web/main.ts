@@ -1,7 +1,7 @@
 import { createEngine } from '../engine/engine.ts';
 import { shapeName } from '../engine/shape.ts';
 import { RULE_KINDS, type Puzzle, type RuleKind } from '../engine/types.ts';
-import type { GenerateOptions } from '../engine/generator/generate.ts';
+import { ruleConflict, type GenerateOptions } from '../engine/generator/generate.ts';
 import { checkCompletion, findViolations, nextHint } from './analysis.ts';
 import { Board, shapeIcon, solutionView } from './board.ts';
 import { PlayerState, WALL } from './model.ts';
@@ -257,11 +257,31 @@ function loadPuzzle(p: Puzzle, solution: Int32Array, stars: number, difficulty: 
       add(M.rule.rose, M.desc.rose(['○', '△', '□', '☆'].slice(0, c.symbolCount).join(' ')));
     } else if (c.type === 'sizeSeparation') {
       add(M.rule.sizeSeparation, M.desc.sizeSeparation);
+    } else if (c.type === 'solitude') {
+      add(M.rule.solitude, M.desc.solitude);
+    } else if (c.type === 'boxy') {
+      add(M.rule.boxy, M.desc.boxy);
+    } else if (c.type === 'nonBoxy') {
+      add(M.rule.nonBoxy, M.desc.nonBoxy);
+    } else if (c.type === 'mingle') {
+      add(M.rule.mingle, M.desc.mingle);
+    } else if (c.type === 'match') {
+      add(M.rule.match, M.desc.match);
+    } else if (c.type === 'mismatch') {
+      add(M.rule.mismatch, M.desc.mismatch);
+    } else if (c.type === 'bricky') {
+      add(M.rule.bricky, M.desc.bricky);
+    } else if (c.type === 'loopy') {
+      add(M.rule.loopy, M.desc.loopy);
     }
   }
   if (kinds.has('polyomino')) add(M.rule.polyomino, M.desc.polyomino);
   if (kinds.has('gemini')) add(M.rule.gemini, M.desc.gemini);
   if (kinds.has('delta')) add(M.rule.delta, M.desc.delta);
+  if (kinds.has('inequality')) add(M.rule.inequality, M.desc.inequality);
+  if (kinds.has('difference')) add(M.rule.difference, M.desc.difference);
+  if (kinds.has('palisade')) add(M.rule.palisade, M.desc.palisade);
+  if (kinds.has('watchtower')) add(M.rule.watchtower, M.desc.watchtower);
   buildGoalBar(p, stars);
   refreshStatus();
   updateButtons();
@@ -295,8 +315,20 @@ function buildGoalBar(p: Puzzle, stars: number): void {
     else if (c.type === 'gemini') specs.set('gemini', () => chip(M.chip.gemini));
     else if (c.type === 'delta') specs.set('delta', () => chip(M.chip.delta));
     else if (c.type === 'sizeSeparation') specs.set('sizeSeparation', () => chip(M.chip.sizeSeparation));
+    else if (c.type === 'solitude') specs.set('solitude', () => chip(M.chip.solitude));
+    else if (c.type === 'boxy') specs.set('boxy', () => chip(M.chip.boxy));
+    else if (c.type === 'nonBoxy') specs.set('nonBoxy', () => chip(M.chip.nonBoxy));
+    else if (c.type === 'inequality') specs.set('inequality', () => chip(M.chip.inequality));
+    else if (c.type === 'difference') specs.set('difference', () => chip(M.chip.difference));
+    else if (c.type === 'mingle') specs.set('mingle', () => chip(M.chip.mingle));
+    else if (c.type === 'match') specs.set('match', () => chip(M.chip.match));
+    else if (c.type === 'mismatch') specs.set('mismatch', () => chip(M.chip.mismatch));
+    else if (c.type === 'palisade') specs.set('palisade', () => chip(M.chip.palisade));
+    else if (c.type === 'bricky') specs.set('bricky', () => chip(M.chip.bricky));
+    else if (c.type === 'loopy') specs.set('loopy', () => chip(M.chip.loopy));
+    else if (c.type === 'watchtower') specs.set('watchtower', () => chip(M.chip.watchtower));
   }
-  for (const k of ['areaNumber', 'range', 'shapeBank', 'rose', 'polyomino', 'gemini', 'delta', 'sizeSeparation']) specs.get(k)?.();
+  for (const k of ['areaNumber', 'range', 'shapeBank', 'rose', 'solitude', 'polyomino', 'boxy', 'nonBoxy', 'gemini', 'delta', 'inequality', 'difference', 'mingle', 'match', 'mismatch', 'palisade', 'watchtower', 'bricky', 'loopy', 'sizeSeparation']) specs.get(k)?.();
   chip('?', [], 'info').setAttribute('aria-label', M.chip.open);
   goalArea.hidden = false;
   board.layout();
@@ -394,9 +426,9 @@ function generateFromForm(): void {
     warn(M.warnNoRules);
     return;
   }
-  // Twin regions have the same shape, hence the same area: size separation forbids exactly that.
-  if (o.rules.includes('gemini') && o.rules.includes('sizeSeparation')) {
-    warn(M.warnGeminiSizeSep);
+  const conflict = ruleConflict(o.rules);
+  if (conflict) {
+    warn({ 'gemini-sizeSeparation': M.warnGeminiSizeSep, 'rose-solitude': M.warnRoseSolitude, 'boxy-nonBoxy': M.warnBoxyNonBoxy, 'solitude-needs-symbols': M.warnSolitudeNeedsSymbols, 'boxy-needs-size': M.warnBoxyNeedsSize, 'gemini-mingle': M.warnGeminiMingle, 'match-mismatch': M.warnMatchMismatch, 'match-shapes': M.warnMatchShapes, 'mismatch-gemini': M.warnMismatchGemini, 'loopy-needs-size': M.warnLoopyNeedsSize }[conflict]);
     return;
   }
   startGenerate(o, true);

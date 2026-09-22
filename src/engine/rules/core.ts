@@ -18,6 +18,11 @@ import type { Deduction, Rule } from './rule.ts';
  *                      exactly enough → everything reachable joins
  *   3 shape-place      enumerate placements of allowed shapes; cells in every
  *                      placement join, cells in none are walled off
+ *   1-2 pocket-count   a wall here would cut off a pocket whose cell count no
+ *                      whole regions could fill (Precision N: not a multiple of
+ *                      N, tier 1; Range / Shape Bank sizes: tier 2) → join.
+ *                      The original's players lean on this arithmetic in most
+ *                      Precision boards.
  */
 export class CoreRule implements Rule {
   readonly kind = 'core';
@@ -41,6 +46,107 @@ export class CoreRule implements Rule {
    * produce a wrong one.
    */
   private conflictCache = new Map<number, boolean>();
+
+  /** composable[s] = a pocket of s cells can be filled by whole regions; null when nothing bounds region areas */
+  private composable: Uint8Array | null | undefined;
+  private singleSize = false;
+
+  private buildComposable(cells: number): void {
+    let lo = 1;
+    let hi = cells;
+    const sizeSets: number[][] = [];
+    let any = false;
+    for (const r of this.rules) {
+      const s = r.regionSizes?.();
+      if (!s) continue;
+      if (s.lo !== undefined) {
+        lo = Math.max(lo, s.lo);
+        any = true;
+      }
+      if (s.hi !== undefined) {
+        hi = Math.min(hi, s.hi);
+        any = true;
+      }
+      if (s.sizes) {
+        sizeSets.push(s.sizes);
+        any = true;
+      }
+    }
+    if (!any) {
+      this.composable = null;
+      return;
+    }
+    const allowed: number[] = [];
+    for (let x = lo; x <= hi; x++) if (sizeSets.every((set) => set.includes(x))) allowed.push(x);
+    this.singleSize = allowed.length === 1;
+    const ok = new Uint8Array(cells + 1);
+    ok[0] = 1;
+    for (let s = 1; s <= cells; s++) {
+      for (const a of allowed) {
+        if (a <= s && ok[s - a]) {
+          ok[s] = 1;
+          break;
+        }
+      }
+    }
+    this.composable = ok;
+  }
+
+  /**
+   * Bridges of the graph of cells joined by non-wall edges: an unknown bridge
+   * made a wall would cut its side off as a pocket, which whole regions must
+   * then fill exactly. A walled-off area whose count cannot be filled is a
+   * contradiction.
+   */
+  private pockets(state: State, push: (e: number, v: 1 | 2, t: string, tier: number) => void): boolean {
+    if (this.composable === undefined) this.buildComposable(state.grid.cells);
+    const ok = this.composable;
+    if (!ok) return true;
+    const g = state.grid;
+    const disc = new Int32Array(g.cells).fill(-1);
+    const low = new Int32Array(g.cells);
+    const sub = new Int32Array(g.cells);
+    const tier = this.singleSize ? 1 : 2;
+    let time = 0;
+    for (let root = 0; root < g.cells; root++) {
+      if (!g.active[root] || disc[root] >= 0) continue;
+      // iterative DFS: frames of [cell, edge index, parent edge]
+      const stack: [number, number, number][] = [[root, 0, -1]];
+      disc[root] = low[root] = time++;
+      sub[root] = 1;
+      const bridges: [number, number][] = []; // [edge, child]
+      while (stack.length) {
+        const frame = stack[stack.length - 1];
+        const u = frame[0];
+        const es = g.adjEdge[u];
+        if (frame[1] < es.length) {
+          const e = es[frame[1]++];
+          if (e === frame[2] || state.edge[e] === WALL) continue;
+          const v = otherCell(g, e, u);
+          if (disc[v] < 0) {
+            disc[v] = low[v] = time++;
+            sub[v] = 1;
+            stack.push([v, 0, e]);
+          } else if (disc[v] < low[u]) low[u] = disc[v];
+          continue;
+        }
+        stack.pop();
+        if (!stack.length) break;
+        const p = stack[stack.length - 1][0];
+        if (low[u] < low[p]) low[p] = low[u];
+        sub[p] += sub[u];
+        if (low[u] > disc[p]) bridges.push([frame[2], u]);
+      }
+      const total = sub[root];
+      if (!ok[total]) return false;
+      for (const [e, child] of bridges) {
+        if (state.edge[e] !== UNKNOWN) continue;
+        const s1 = sub[child];
+        if (!ok[s1] || !ok[total - s1]) push(e, JOIN, 'pocket-count', tier);
+      }
+    }
+    return true;
+  }
 
   private conflict(state: State, A: Comp, B: Comp): boolean {
     const key = A.id < B.id ? A.id * state.grid.cells + B.id : B.id * state.grid.cells + A.id;
@@ -134,7 +240,7 @@ export class CoreRule implements Rule {
         if (!this.placements(state, comp, push)) return false;
       }
     }
-    return true;
+    return this.pockets(state, push);
   }
 
   /**

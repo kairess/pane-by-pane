@@ -159,3 +159,117 @@ export function isNice(w: number, h: number, active: Uint8Array): boolean {
   }
   return reached === count;
 }
+
+/**
+ * Punch a few more cells out of a board until its active cell count is a
+ * multiple of `unit` (every region of a Precision N board has N cells, so the
+ * board must have a multiple of N; likewise a bank whose shapes' sizes share a
+ * common factor). Cells go from the outside in, keeping the board nice; the
+ * original's Precision boards are cut to size this way (a 60-cell 10x6 for
+ * 4s, an 85-cell 11x11 outline for 5s). Returns null when no nice board of
+ * the right count is found.
+ */
+export function punchToMultiple(w: number, h: number, holes: readonly number[], unit: number, rng: Rng): number[] | null {
+  const cells = w * h;
+  const active = new Uint8Array(cells).fill(1);
+  for (const c of holes) active[c] = 0;
+  let count = 0;
+  for (let c = 0; c < cells; c++) count += active[c];
+  if (unit <= 1 || count % unit === 0) return [...holes];
+  const sides = (c: number): number => {
+    const x = c % w;
+    let n = 0;
+    if (x === 0 || !active[c - 1]) n++;
+    if (x === w - 1 || !active[c + 1]) n++;
+    if (c < w || !active[c - w]) n++;
+    if (c + w >= cells || !active[c + w]) n++;
+    return n;
+  };
+  for (let t = 0; t < 400 && count % unit !== 0; t++) {
+    const candidates: number[] = [];
+    for (let c = 0; c < cells; c++) {
+      if (!active[c]) continue;
+      const s = sides(c);
+      if (s === 0) continue;
+      candidates.push(c);
+      if (s >= 2) candidates.push(c, c);
+    }
+    if (!candidates.length) break;
+    const c = rng.pick(candidates);
+    active[c] = 0;
+    if (isNice(w, h, active)) count--;
+    else active[c] = 1;
+  }
+  if (count % unit !== 0) return null;
+  const out: number[] = [];
+  for (let c = 0; c < cells; c++) if (!active[c]) out.push(c);
+  return out;
+}
+
+/** The active cells form one connected piece (no niceness requirement). */
+export function isConnected(w: number, h: number, active: Uint8Array): boolean {
+  const cells = w * h;
+  let start = -1;
+  let count = 0;
+  for (let c = 0; c < cells; c++) if (active[c]) { count++; if (start < 0) start = c; }
+  if (count === 0) return false;
+  const seen = new Uint8Array(cells);
+  const stack = [start];
+  seen[start] = 1;
+  let reached = 0;
+  while (stack.length) {
+    const c = stack.pop()!;
+    reached++;
+    const x = c % w;
+    for (const n of [x > 0 ? c - 1 : -1, x < w - 1 ? c + 1 : -1, c - w, c + w]) {
+      if (n < 0 || n >= cells || !active[n] || seen[n]) continue;
+      seen[n] = 1;
+      stack.push(n);
+    }
+  }
+  return reached === count;
+}
+
+/**
+ * Punch cells out from the outside in until at most `maxCells` remain (and a
+ * multiple of `unit`), keeping the board nice. Mismatch with Precision N
+ * cannot use more regions than there are polyominoes of N cells (five of
+ * four, twelve of five), so the board has to be that small.
+ */
+export function punchToAtMost(w: number, h: number, holes: readonly number[], maxCells: number, unit: number, rng: Rng): number[] | null {
+  const cells = w * h;
+  const active = new Uint8Array(cells).fill(1);
+  for (const c of holes) active[c] = 0;
+  let count = 0;
+  for (let c = 0; c < cells; c++) count += active[c];
+  const target = Math.floor(Math.min(count, maxCells) / unit) * unit;
+  if (target < unit) return null;
+  const sides = (c: number): number => {
+    const x = c % w;
+    let n = 0;
+    if (x === 0 || !active[c - 1]) n++;
+    if (x === w - 1 || !active[c + 1]) n++;
+    if (c < w || !active[c - w]) n++;
+    if (c + w >= cells || !active[c + w]) n++;
+    return n;
+  };
+  for (let t = 0; t < 2000 && count > target; t++) {
+    const candidates: number[] = [];
+    for (let c = 0; c < cells; c++) {
+      if (!active[c]) continue;
+      const s = sides(c);
+      if (s === 0) continue;
+      candidates.push(c);
+      if (s >= 2) candidates.push(c, c);
+    }
+    if (!candidates.length) break;
+    const c = rng.pick(candidates);
+    active[c] = 0;
+    if (isNice(w, h, active)) count--;
+    else active[c] = 1;
+  }
+  if (count !== target) return null;
+  const out: number[] = [];
+  for (let c = 0; c < cells; c++) if (!active[c]) out.push(c);
+  return out;
+}

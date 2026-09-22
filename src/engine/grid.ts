@@ -111,3 +111,43 @@ export function activeCells(g: Grid): number[] {
   for (let c = 0; c < g.cells; c++) if (g.active[c]) out.push(c);
   return out;
 }
+
+/** Neighbour of `c` in direction 0 = N, 1 = E, 2 = S, 3 = W, or -1 (board edge / hole). */
+export function neighbourInDirection(g: Grid, c: number, dir: number): number {
+  const x = c % g.w;
+  const y = (c - x) / g.w;
+  const nx = x + (dir === 1 ? 1 : dir === 3 ? -1 : 0);
+  const ny = y + (dir === 2 ? 1 : dir === 0 ? -1 : 0);
+  if (nx < 0 || ny < 0 || nx >= g.w || ny >= g.h) return -1;
+  const n = ny * g.w + nx;
+  return g.active[n] ? n : -1;
+}
+
+/**
+ * The cells around the vertex at corner coordinates (x, y), 0..w and 0..h:
+ * [north-west, north-east, south-west, south-east], -1 where there is none.
+ */
+export function vertexCells(g: Grid, x: number, y: number): [number, number, number, number] {
+  const at = (cx: number, cy: number): number => {
+    if (cx < 0 || cy < 0 || cx >= g.w || cy >= g.h) return -1;
+    const c = cy * g.w + cx;
+    return g.active[c] ? c : -1;
+  };
+  return [at(x - 1, y - 1), at(x, y - 1), at(x - 1, y), at(x, y)];
+}
+
+/** The edges meeting at a vertex (between its neighbouring cells), as they exist. */
+export function vertexEdges(g: Grid, x: number, y: number): number[] {
+  const [nw, ne, sw, se] = vertexCells(g, x, y);
+  const out: number[] = [];
+  const add = (a: number, b: number) => {
+    if (a < 0 || b < 0) return;
+    const e = edgeBetween(g, a, b);
+    if (e >= 0) out.push(e);
+  };
+  add(nw, ne);
+  add(sw, se);
+  add(nw, sw);
+  add(ne, se);
+  return out;
+}
