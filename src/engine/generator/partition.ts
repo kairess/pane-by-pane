@@ -1,4 +1,4 @@
-import { activeCells, type Grid } from '../grid.ts';
+import { activeCells, makeGrid, type Grid } from '../grid.ts';
 import type { Rng } from '../random.ts';
 import { canonical, keyOrientations, regionKey, type Pt, type ShapeKey } from '../shape.ts';
 import { BANK_CATALOG, BANK_SIZE_WEIGHTS } from './bankCatalog.ts';
@@ -161,6 +161,88 @@ function acceptable(g: Grid, labels: Labels, opt: PartitionOptions): boolean {
     }
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Twin pairs for hard marker-only puzzles.
+
+export interface PairPartitionOptions {
+  /** number of congruent pairs to place (all of them, unless `minPairs` allows fewer on a crowded board) */
+  pairs: number;
+  minPairs?: number;
+  /** cell count of the paired shapes */
+  sizeLo: number;
+  sizeHi: number;
+  /** cell count of the regions filling the rest of the board */
+  restLo: number;
+  restHi: number;
+}
+
+/**
+ * A partition built around pairs of congruent regions that border each other,
+ * with the rest of the board cut into small regions. Made for twin/unlike
+ * marker puzzles asked for high stars: a random partition of 1-3-cell regions
+ * pins its solution easily but tops out around 5★, since every what-if is
+ * settled within a couple of cells. Two bordering copies of a 3-4-cell shape
+ * under a twin marker make the solver work out both shapes together, and
+ * several such pairs give the deep what-ifs a 6-7★ rating needs more often
+ * (200 attempts, twelve seeds on 6x6: 3 hits with four pairs against 1 with
+ * random small regions, in half the time; 8x8, six seeds: 4 against 2, in a
+ * quarter of the time). Most 6x6 requests still come back as 5★ misses.
+ */
+export function pairPartition(g: Grid, rng: Rng, opt: PairPartitionOptions, attempts = 60): Labels | null {
+  const minPairs = Math.max(1, Math.min(opt.pairs, opt.minPairs ?? opt.pairs));
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const labels = new Int32Array(g.cells).fill(-1);
+    const free = g.active.slice();
+    let id = 0;
+    let placed = 0;
+    for (let p = 0; p < opt.pairs; p++) {
+      const orients = keyOrientations(randomShape(rng.range(opt.sizeLo, opt.sizeHi), rng));
+      const a = placeShape(g, free, rng.pick(orients), rng, null);
+      if (!a) continue;
+      for (const c of a) free[c] = 0;
+      const b = placeShape(g, free, rng.pick(orients), rng, a);
+      if (!b) {
+        for (const c of a) free[c] = 1;
+        continue;
+      }
+      for (const c of b) free[c] = 0;
+      for (const c of a) labels[c] = id;
+      for (const c of b) labels[c] = id + 1;
+      id += 2;
+      placed++;
+    }
+    if (placed < minPairs) continue;
+    const holes: number[] = [];
+    for (let c = 0; c < g.cells; c++) if (!free[c]) holes.push(c);
+    if (holes.length === g.cells) return relabel(labels);
+    const rest = growPartition(makeGrid(g.w, g.h, holes), rng, { minSize: opt.restLo, maxSize: opt.restHi }, 50);
+    if (!rest) continue;
+    for (let c = 0; c < g.cells; c++) if (rest[c] >= 0) labels[c] = id + rest[c];
+    return relabel(labels);
+  }
+  return null;
+}
+
+/** Random placement of an oriented shape on free cells; with `touching`, it must border one of those cells. */
+function placeShape(g: Grid, free: Uint8Array, shape: readonly Pt[], rng: Rng, touching: readonly number[] | null, tries = 400): number[] | null {
+  const touch = touching ? new Set(touching) : null;
+  for (let t = 0; t < tries; t++) {
+    const x0 = rng.int(g.w);
+    const y0 = rng.int(g.h);
+    const cells: number[] = [];
+    for (const [dx, dy] of shape) {
+      const x = x0 + dx;
+      const y = y0 + dy;
+      if (x < 0 || x >= g.w || y < 0 || y >= g.h || !free[y * g.w + x]) break;
+      cells.push(y * g.w + x);
+    }
+    if (cells.length !== shape.length) continue;
+    if (touch && !cells.some((c) => g.adj[c].some((n) => touch.has(n)))) continue;
+    return cells;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

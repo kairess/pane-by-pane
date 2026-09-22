@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { autoSizeBand, generate, pickWalls, sameLabels } from '../src/engine/generator/generate.ts';
-import { growPartition, tilePartition, randomBank, catalogBank, regionsOf } from '../src/engine/generator/partition.ts';
+import { growPartition, tilePartition, randomBank, catalogBank, regionsOf, pairPartition, adjacentRegions } from '../src/engine/generator/partition.ts';
+import { roseSymbolCells } from '../src/engine/generator/clues.ts';
 import { BANK_CATALOG } from '../src/engine/generator/bankCatalog.ts';
 import { shapeSize } from '../src/engine/shape.ts';
 import { Rng } from '../src/engine/random.ts';
@@ -223,4 +224,42 @@ test('region size band is chosen from board size and target stars when not given
   assert.ok(loHard >= loMid && hiHard > hiMid);
   assert.ok(loEasy <= loMid && hiEasy < hiMid);
   assert.ok(autoSizeBand(10, 10, 1, 7)[1] > autoSizeBand(5, 5, 1, 7)[1]);
+});
+
+test('numbers + rose on a plain board: symbols sit inside, and large boards fall back to distinct-area neighbours', () => {
+  const g = makeGrid(6, 6);
+  const rng = new Rng(3);
+  // a 2x3 block: the symbols avoid the cells with the most neighbours outside
+  const block = [7, 8, 9, 13, 14, 15];
+  const cells = roseSymbolCells(g, block, 2, rng, false)!;
+  for (const c of cells) assert.ok([8, 14].includes(c), `symbol on an inner cell, got ${c}`);
+  // 8x8 plain board without fixed walls, two symbols: the free partition rarely
+  // pins the full clue set; the fallback does
+  const t0 = Date.now();
+  const r = generate({ width: 8, height: 8, rules: ['areaNumber', 'rose'], roseSymbols: 2, stars: [1, 7], mask: 'rect', seed: 1, attempts: 40 });
+  assert.ok(r && !r.missed, 'generated within budget');
+  assert.ok(Date.now() - t0 < 30_000);
+});
+
+test('pairPartition: congruent pairs border each other, the rest is small', () => {
+  const g = makeGrid(6, 6);
+  const rng = new Rng(5);
+  const labels = pairPartition(g, rng, { pairs: 4, sizeLo: 3, sizeHi: 4, restLo: 1, restHi: 2 });
+  assert.ok(labels, 'partition made');
+  const regions = regionsOf(labels);
+  assert.equal(regions.reduce((a, r) => a + r.length, 0), 36);
+  // labels are renumbered in scan order, so pairs are found by size: the rest is 1-2 cells
+  const keys = regions.map((r) => regionKey(6, r));
+  const neighbours = new Map<number, Set<number>>();
+  for (const key of adjacentRegions(g, labels).keys()) {
+    const [a, b] = key.split('-').map(Number);
+    (neighbours.get(a) ?? neighbours.set(a, new Set()).get(a)!).add(b);
+    (neighbours.get(b) ?? neighbours.set(b, new Set()).get(b)!).add(a);
+  }
+  const big = regions.map((r, i) => i).filter((i) => regions[i].length >= 3);
+  assert.equal(big.length, 8, 'four pairs');
+  for (const i of big) {
+    assert.ok(regions[i].length <= 4);
+    assert.ok([...neighbours.get(i)!].some((j) => regions[j].length >= 3 && keys[j] === keys[i]), `region ${i} borders its twin`);
+  }
 });

@@ -135,15 +135,29 @@ export function deriveClueUnits(g: Grid, labels: Labels, rng: Rng, opt: ClueOpti
 }
 
 /**
- * Which cells of a region carry the rose symbols. A cell without a symbol can
+ * Which cells of a region carry the rose symbols.
+ *
+ * `forced` (rose outlines the regions by itself): a cell without a symbol can
  * move to a neighbouring region without breaking the rose rule unless removing
  * it would cut its own region in two, so the symbols go on the cells that are
  * *not* cut cells (a path's two ends, a T's three tips), and the rest are
- * bridges. When the region has more such cells than symbols this is impossible;
- * `forced` then gives up, otherwise the cells are picked at random.
+ * bridges. When the region has more such cells than symbols this is
+ * impossible and null is returned.
+ *
+ * Otherwise another rule outlines the regions and the symbol cells are the
+ * ones *without* a number (one symbol per cell). A symbol cell on a border can
+ * trade places with the like symbol across it without changing any number, so
+ * the symbols go to the innermost cells (fewest neighbours in other regions)
+ * and the numbers keep the borders. Measured on plain 7x7-9x9 boards with two
+ * symbols this makes the full clue set unique several times as often as
+ * placing them on the tips.
  */
 export function roseSymbolCells(g: Grid, region: number[], k: number, rng: Rng, forced: boolean): number[] | null {
   const inRegion = new Set(region);
+  if (!forced) {
+    const foreign = (c: number) => g.adj[c].filter((n) => !inRegion.has(n)).length;
+    return rng.shuffle(region.slice()).sort((a, b) => foreign(a) - foreign(b)).slice(0, k);
+  }
   const connectedWithout = (skip: number): boolean => {
     const start = region.find((c) => c !== skip);
     if (start === undefined) return true;
@@ -159,7 +173,7 @@ export function roseSymbolCells(g: Grid, region: number[], k: number, rng: Rng, 
     return seen.size === region.length - 1;
   };
   const tips = region.length === 1 ? region.slice() : region.filter((c) => connectedWithout(c));
-  if (tips.length > k) return forced ? null : rng.shuffle(region.slice()).slice(0, k);
+  if (tips.length > k) return null;
   const rest = rng.shuffle(region.filter((c) => !tips.includes(c)));
   return [...tips, ...rest.slice(0, k - tips.length)];
 }

@@ -7,7 +7,7 @@ import { solve } from '../solver.ts';
 import type { Clue, EdgeRef, Labels, Puzzle, RuleKind } from '../types.ts';
 import { deriveClueUnits, flatten, type ClueUnit } from './clues.ts';
 import { isNice, randomMask, type Symmetry } from './mask.ts';
-import { catalogBank, growPartition, relabel, tilePartition } from './partition.ts';
+import { catalogBank, growPartition, pairPartition, relabel, tilePartition } from './partition.ts';
 
 /**
  * Solution-first pipeline (docs/IDEA.md §3):
@@ -94,6 +94,12 @@ export interface GenerateOptions {
   maxClues?: number;
   /** diagnostics: called once per attempt with the reason it was rejected (or 'ok') */
   onAttempt?: (info: AttemptInfo) => void;
+  /**
+   * Supply the solution partition yourself (experiments, tests): called for
+   * every new solution with the board and the generator's rng; return null
+   * to skip it. Replaces the built-in partition strategies.
+   */
+  partition?: (g: Grid, rng: Rng) => Labels | null;
 }
 
 export interface AttemptInfo {
@@ -160,6 +166,22 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
   // about half of the partitions with regions of 1-3 cells, a tenth with 1-4,
   // and never with 1-5.
   const markerOnly = wallMode && !opt.rules.includes('range') && roseK === 0;
+  // Twin markers asked for high stars: small regions settle every what-if in
+  // a couple of cells and top out around 5★. Building the partition around
+  // bordering pairs of congruent 3-4-cell shapes (twins the solver has to
+  // work out together), with the rest cut small, reaches 6-7★ two to three
+  // times as often, in less time (see pairPartition).
+  const twinPairs = markerOnly && opt.rules.includes('gemini') && !sizeSep && !explicitSize && starLo >= 6;
+  // Numbers outline the regions (no shapes to pin them): two bordering regions
+  // of equal area can usually trade cells without changing any number, so on
+  // a large plain board the full clue set is rarely unique (9x9: one solution
+  // in twenty; with rose symbols taking cells away from the numbers, fewer).
+  // Partitions whose bordering regions all differ in area are unique almost
+  // every time, but they are a visible trait, so the generator only switches
+  // to them after the free partitions have failed twice in a row.
+  const numbersOutline = opt.rules.includes('areaNumber') && !useBank && !opt.rules.includes('polyomino');
+  let distinctSizes = false;
+  let notUniqueRun = 0;
   /** region size bounds for the next solution */
   const sizeBand = (): [number, number] => {
     let lo = opt.minSize ?? autoLo;
@@ -287,14 +309,23 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
       g = opt.mask === 'symmetric' ? makeGrid(rect.w, rect.h, randomMask(rect.w, rect.h, rng, { ratio: opt.holeRatio, symmetry: opt.symmetry, asymmetry: opt.asymmetry })) : rect;
       let solution: Labels | null;
       let decoys: ShapeKey[] = [];
-      if (useBank) {
+      if (opt.partition) solution = opt.partition(g, rng);
+      else if (twinPairs) {
+        // pairs of 3-4 cells over about three quarters of the board, the rest in 1-2-cell regions
+        const pairs = Math.max(2, Math.ceil((0.75 * g.activeCount) / 7));
+        solution = pairPartition(g, rng, { pairs, sizeLo: 3, sizeHi: 4, restLo: 1, restHi: 2 });
+      } else if (useBank) {
         const sizes = { minSize: Math.max(opt.bankShapeSizes?.[0] ?? 1, roseK), maxSize: opt.bankShapeSizes?.[1] };
         const bank = catalogBank(rng, { count: opt.bankSize, ...sizes });
         solution = tilePartition(g, bank, rng, { sizeSeparation: sizeSep });
         if (opt.bankDecoys) decoys = catalogBank(rng, { count: opt.bankDecoys, ...sizes, exclude: bank });
       } else {
         const [sizeLo, sizeHi] = sizeBand();
-        solution = growPartition(g, rng, { minSize: sizeLo, maxSize: sizeHi, sizeSeparation: sizeSep, maxTips: roseOnly ? roseK : undefined });
+        const grow = (lo: number, hi: number) => growPartition(g, rng, { minSize: lo, maxSize: hi, sizeSeparation: sizeSep || distinctSizes, maxTips: roseOnly ? roseK : undefined });
+        solution = grow(sizeLo, sizeHi);
+        // Distinct areas everywhere need more sizes to choose from than a
+        // narrow band offers: widen it a little before giving up.
+        if (!solution && distinctSizes && !explicitSize) solution = grow(sizeLo, sizeHi + 1) ?? grow(Math.max(3, roseK, sizeLo - 1), sizeHi + 2);
       }
       if (!solution) {
         report('no-partition');
@@ -351,8 +382,10 @@ export function generate(opt: GenerateOptions): GeneratedPuzzle | null {
       }
       if (!pinned) {
         report('not-unique');
+        if (numbersOutline && ++notUniqueRun >= 2) distinctSizes = true;
         continue;
       }
+      notUniqueRun = 0;
       cap = starHi;
       let fullAnalysis = accept(full.clues);
       if (!fullAnalysis) {
